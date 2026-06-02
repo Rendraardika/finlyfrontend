@@ -1,0 +1,665 @@
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Search, Filter, Plus, Sparkles, ChevronDown, ChevronUp,
+  Pencil, Trash2, FileText, ChevronLeft, ChevronRight,
+  FileSpreadsheet, Loader
+} from 'lucide-react';
+import AppLayout from '../components/AppLayout';
+import TransactionStats from '../components/transaksi/TransactionStats';
+import TransactionModal from '../components/transaksi/TransactionModal';
+import SmartAIModal from '../components/transaksi/SmartAIModal';
+import EmptyState from '../components/EmptyState';
+import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
+import useTransactions from '../hooks/useTransactions';
+import useClickOutside from '../hooks/useClickOutside';
+import { formatIDR } from '../utils/transactionViewModel';
+import { compareIndonesianDates, getMonthYearFromIndonesianDate } from '../utils/dateHelper';
+
+export default function Transaksi() {
+  const { showSuccess, showError, showInfo } = useToast();
+  const { confirm } = useConfirm();
+  const {
+    transactions,
+    transactionSummary,
+    isLoading,
+    loadError,
+    deleteById,
+    saveTransaction,
+    saveSmartTransaction,
+    scanReceiptImage,
+  } = useTransactions({ showError, showSuccess, showInfo });
+  
+  const [activeTab, setActiveTab] = useState('semua');
+  const [expandedRow, setExpandedRow] = useState(null);
+  const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
+  const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
+  const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState('Semua Waktu');
+  const [sortFilter, setSortFilter] = useState('terbaru');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const [isManualOpen, setIsManualOpen] = useState(false);
+  const [manualType, setManualType] = useState('expense');
+  const [editingData, setEditingData] = useState(null);
+  const [nominalInput, setNominalInput] = useState('');
+
+  const [isSmartOpen, setIsSmartOpen] = useState(false);
+  const [smartStep, setSmartStep] = useState(1);
+  const [scanResult, setScanResult] = useState(null);
+  const filterControlsRef = useRef(null);
+
+  const handleNominalChange = (e) => {
+    const rawValue = e.target.value.replace(/[^0-9]/g, '');
+    if (rawValue === '') {
+      setNominalInput('');
+      return;
+    }
+    const formattedValue = new Intl.NumberFormat('id-ID').format(rawValue);
+    setNominalInput(formattedValue);
+  };
+
+  const handleDelete = async (id) => {
+    const confirmed = await confirm({
+      title: 'Hapus Transaksi?',
+      message: 'Transaksi ini akan dihapus permanen dan tidak bisa dikembalikan.',
+      confirmText: 'Hapus',
+      isDanger: true
+    });
+
+    if (confirmed) {
+      const deleted = await deleteById(id);
+      if (deleted) {
+        setExpandedRow(null);
+      }
+    }
+  };
+
+  const handleSaveTransaction = async (transaction) => {
+    const saved = await saveTransaction(transaction, editingData);
+    if (saved) {
+      setSelectedMonth('Semua Waktu');
+      setExpandedRow(null);
+      setEditingData(null);
+    }
+  };
+
+  const closeSmartModal = () => {
+    setIsSmartOpen(false);
+    setSmartStep(1);
+    setScanResult(null);
+  };
+
+  const handleSimulateAI = () => {
+    setSmartStep(2);
+    setTimeout(() => {
+      setScanResult({
+        merchant: 'Kopi Kenangan (Simulasi)',
+        total: 185000,
+        transaction_date: '2026-05-27',
+        category_name: 'makanan'
+      });
+      setSmartStep(3);
+    }, 2000);
+  };
+
+  const handleFileSelected = async (file) => {
+    setSmartStep(2);
+    try {
+      const response = await scanReceiptImage(file);
+      if (response.success && response.data) {
+        setScanResult(response.data);
+        setSmartStep(3);
+      } else {
+        throw new Error(response.message || 'Gagal membaca struk');
+      }
+    } catch (err) {
+      console.error('Error scanning file:', err);
+      showInfo('Deteksi AI offline/gagal, menjalankan mode demo...');
+      handleSimulateAI();
+    }
+  };
+
+  const handleSaveSmartAI = async (editedData) => {
+    const saved = await saveSmartTransaction(editedData);
+    if (saved) {
+      setSelectedMonth('Semua Waktu');
+      closeSmartModal();
+    }
+  };
+
+  const pageSize = 10;
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredData = transactions
+    .filter((trx) => {
+      if (activeTab === 'pemasukan') return trx.type === 'income';
+      if (activeTab === 'pengeluaran') return trx.type === 'expense';
+      return true;
+    })
+    .filter((trx) => {
+      if (selectedMonth === 'Semua Waktu') return true;
+      const monthYear = getMonthYearFromIndonesianDate(trx.date);
+      const selectedMonthYear = selectedMonth.split(' ');
+      return monthYear.month === selectedMonthYear[0] && monthYear.year === selectedMonthYear[1];
+    })
+    .filter((trx) => {
+      if (!normalizedSearchQuery) return true;
+
+      const searchableText = [
+        trx.title,
+        trx.merchant,
+        trx.category,
+        trx.note,
+        trx.date,
+        trx.type === 'income' ? 'pemasukan masuk income' : 'pengeluaran keluar expense',
+        String(Math.abs(trx.amount || 0)),
+      ].join(' ').toLowerCase();
+
+      return searchableText.includes(normalizedSearchQuery);
+    })
+    .sort((a, b) => {
+      if (sortFilter === 'terbesar') return Math.abs(b.amount) - Math.abs(a.amount);
+      if (sortFilter === 'terkecil') return Math.abs(a.amount) - Math.abs(b.amount);
+      
+      const dateComparison = compareIndonesianDates(a.date, b.date);
+      if (sortFilter === 'terlama') return dateComparison;
+      return -dateComparison;
+    });
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * pageSize;
+  const paginatedData = filteredData.slice(pageStartIndex, pageStartIndex + pageSize);
+  const visibleStart = filteredData.length === 0 ? 0 : pageStartIndex + 1;
+  const visibleEnd = Math.min(pageStartIndex + paginatedData.length, filteredData.length);
+  const pageButtons = Array.from({ length: totalPages }, (_, index) => index + 1);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setExpandedRow(null);
+  }, [activeTab, selectedMonth, sortFilter, searchQuery]);
+
+  useClickOutside(filterControlsRef, () => {
+    setIsTypeDropdownOpen(false);
+    setIsMonthDropdownOpen(false);
+    setIsFilterDropdownOpen(false);
+  }, isTypeDropdownOpen || isMonthDropdownOpen || isFilterDropdownOpen);
+
+  const toggleRow = (id) => {
+    if (expandedRow === id) setExpandedRow(null);
+    else setExpandedRow(id);
+  };
+
+  const handleEditTransaction = (trx) => {
+    setEditingData(trx);
+    setManualType(trx.type);
+    setIsManualOpen(true);
+    setNominalInput(new Intl.NumberFormat('id-ID').format(Math.abs(trx.amount)));
+  };
+
+  const toggleDateSort = () => {
+    setSortFilter((current) => (current === 'terbaru' ? 'terlama' : 'terbaru'));
+  };
+
+  const toggleAmountSort = () => {
+    setSortFilter((current) => (current === 'terbesar' ? 'terkecil' : 'terbesar'));
+  };
+
+  const transactionTypeOptions = [
+    { value: 'semua', label: 'Semua Transaksi' },
+    { value: 'pemasukan', label: 'Pemasukan' },
+    { value: 'pengeluaran', label: 'Pengeluaran' },
+  ];
+  const activeTypeLabel = transactionTypeOptions.find((option) => option.value === activeTab)?.label || 'Semua Transaksi';
+
+  return (
+    <AppLayout activeMenu="transaksi">
+      <div className="px-4 sm:px-6 lg:px-8 pt-4 max-w-7xl mx-auto w-full relative">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+          <div className="min-w-0">
+            <h1 className="text-[22px] sm:text-[26px] font-bold page-title mb-1 break-words">Daftar Transaksi</h1>
+            <p className="page-subtitle text-[14px] sm:text-[15px] break-words">Pantau dan kelola arus kasmu.</p>
+          </div>
+
+          {!isLoading && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full md:w-auto">
+            <button
+              onClick={() => {
+                setIsSmartOpen(true);
+                setSmartStep(1);
+              }}
+              className="flex items-center justify-center gap-2 w-full px-5 py-2.5 rounded-xl border border-[#05A845] text-[#05A845] font-semibold text-[14px] hover:bg-[#EAF6ED] dark:hover:bg-[#05A845]/10 transition-colors shadow-sm"
+            >
+              <Sparkles size={18} className="shrink-0" />
+              <span className="truncate">Smart Input AI</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setEditingData(null);
+                setManualType('expense');
+                setIsManualOpen(true);
+                setNominalInput('');
+              }}
+              className="flex items-center justify-center gap-2 w-full px-5 py-2.5 rounded-xl bg-[#05A845] text-white font-semibold text-[14px] hover:bg-[#048A38] transition-colors shadow-sm"
+            >
+              <Plus size={18} className="shrink-0" />
+              <span className="truncate">Tambah Transaksi</span>
+            </button>
+          </div>
+          )}
+        </div>
+
+        {isLoading && (
+          <div className="app-card rounded-[24px] py-16 flex flex-col items-center justify-center">
+            <Loader size={48} className="text-gray-400 animate-spin mb-4" />
+            <p className="text-gray-500 dark:text-gray-400 text-[14px]">Memuat transaksi...</p>
+          </div>
+        )}
+
+        {loadError && !isLoading && (
+          <div className="app-card rounded-[24px] p-6 mb-6">
+            <EmptyState
+              icon="error"
+              title="Gagal Memuat Transaksi"
+              message={loadError || 'Terjadi kesalahan saat memuat data. Silakan coba lagi.'}
+              buttonText="Muat Ulang"
+              onButtonClick={() => window.location.reload()}
+            />
+          </div>
+        )}
+
+        {!isLoading && !loadError && (
+          <>
+            <TransactionStats summary={transactionSummary} />
+
+        <div className="app-card rounded-[24px] overflow-hidden">
+          {transactions.length === 0 ? (
+            <div className="p-6 sm:p-8">
+              <EmptyState
+                icon="empty"
+                title="Belum ada transaksi"
+                message="Mulai dengan menambahkan transaksi pertamamu."
+                buttonText="Tambah Transaksi"
+                onButtonClick={() => {
+                  setEditingData(null);
+                  setManualType('expense');
+                  setIsManualOpen(true);
+                  setNominalInput('');
+                }}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="p-4 sm:p-6 border-b app-divider space-y-4">
+            <div ref={filterControlsRef} className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-[minmax(170px,1fr)_minmax(170px,1fr)_auto] lg:flex gap-3 w-full lg:w-auto items-stretch lg:items-center">
+              <div className="relative min-w-0">
+                <button
+                  type="button"
+                  onClick={() => { setIsTypeDropdownOpen(!isTypeDropdownOpen); setIsMonthDropdownOpen(false); setIsFilterDropdownOpen(false); }}
+                  aria-expanded={isTypeDropdownOpen}
+                  className={`flex w-full items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-[#1f2028] border rounded-xl text-[13px] text-[#1A1A1A] dark:text-white font-medium shadow-sm lg:w-auto lg:min-w-[170px] whitespace-nowrap transition-colors ${isTypeDropdownOpen ? 'border-[#05A845]' : 'border-gray-200 dark:border-[#2e303a]'}`}
+                >
+                  <span className="truncate">{activeTypeLabel}</span>
+                  <ChevronDown size={14} className={`text-gray-400 dark:text-gray-500 shrink-0 transition-transform ${isTypeDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isTypeDropdownOpen && (
+                  <div className="absolute left-0 top-full z-40 mt-2 w-full min-w-[190px] overflow-hidden rounded-xl border border-gray-100 dark:border-[#2e303a] bg-white dark:bg-[#1f2028] shadow-lg animate-in fade-in zoom-in-95">
+                    <div className="py-1">
+                      {transactionTypeOptions.map((option) => {
+                        const isSelected = activeTab === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => { setActiveTab(option.value); setIsTypeDropdownOpen(false); }}
+                            className={`w-full px-4 py-2.5 text-left text-[13px] font-medium transition-colors ${isSelected ? 'bg-[#EAF6ED] dark:bg-[#05A845]/15 text-[#05A845]' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.06]'}`}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative min-w-0">
+                <button
+                  type="button"
+                  onClick={() => { setIsMonthDropdownOpen(!isMonthDropdownOpen); setIsTypeDropdownOpen(false); setIsFilterDropdownOpen(false); }}
+                  aria-expanded={isMonthDropdownOpen}
+                  className={`flex w-full items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-[#1f2028] border rounded-xl text-[13px] text-[#1A1A1A] dark:text-white font-medium shadow-sm lg:w-auto lg:min-w-[170px] whitespace-nowrap transition-colors ${isMonthDropdownOpen ? 'border-[#05A845]' : 'border-gray-200 dark:border-[#2e303a]'}`}
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="truncate">{selectedMonth}</span>
+                  </span>
+                  <ChevronDown size={14} className={`text-gray-400 dark:text-gray-500 shrink-0 transition-transform ${isMonthDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isMonthDropdownOpen && (
+                  <div className="absolute right-0 top-full z-40 mt-2 w-full min-w-[190px] overflow-hidden rounded-xl border border-gray-100 dark:border-[#2e303a] bg-white dark:bg-[#1f2028] shadow-lg animate-in fade-in zoom-in-95">
+                    <div className="max-h-64 overflow-y-auto py-1">
+                      {['Agustus 2026', 'September 2026', 'Oktober 2026', 'Semua Waktu'].map((m) => {
+                        const isSelected = selectedMonth === m;
+
+                        return (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => { setSelectedMonth(m); setIsMonthDropdownOpen(false); }}
+                            className={`w-full px-4 py-2.5 text-left text-[13px] font-medium transition-colors ${isSelected ? 'bg-[#EAF6ED] dark:bg-[#05A845]/15 text-[#05A845]' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/[0.06]'}`}
+                          >
+                            {m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <button
+                  onClick={() => { setIsFilterDropdownOpen(!isFilterDropdownOpen); setIsTypeDropdownOpen(false); setIsMonthDropdownOpen(false); }}
+                  className={`w-full sm:w-auto h-full min-h-[40px] px-4 sm:px-2.5 flex items-center justify-center border rounded-xl transition-colors ${isFilterDropdownOpen ? 'border-[#05A845] bg-[#EAF6ED] dark:bg-[#05A845]/10 text-[#05A845]' : 'border-gray-200 dark:border-[#2e303a] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04]'}`}
+                >
+                  <Filter size={18} />
+                </button>
+                {isFilterDropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-48 app-dropdown rounded-xl overflow-hidden z-20 animate-in fade-in zoom-in-95">
+                    <div className="px-4 py-2 border-b border-gray-50 dark:border-[#2e303a] text-[11px] font-bold text-gray-400 uppercase">Urutkan Berdasarkan</div>
+                    {['terbaru', 'terlama', 'terbesar', 'terkecil'].map((opt) => (
+                      <div
+                        key={opt}
+                        onClick={() => { setSortFilter(opt); setIsFilterDropdownOpen(false); }}
+                        className={`px-4 py-2.5 text-[13px] font-medium cursor-pointer hover:bg-gray-50 dark:hover:bg-white/[0.04] capitalize ${sortFilter === opt ? 'text-[#05A845] bg-[#EAF6ED]/50 dark:bg-[#05A845]/10' : 'text-gray-600 dark:text-gray-300'}`}
+                      >
+                        {opt}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Tombol Export */}
+              <div className="grid grid-cols-2 gap-2 sm:col-span-3 lg:flex">
+                <button
+                  onClick={() => showInfo('Fitur Download PDF sedang diproses...')}
+                  className="flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 dark:border-[#2e303a] rounded-xl text-gray-600 dark:text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors text-[13px] font-medium whitespace-nowrap"
+                >
+                  <FileText size={16} className="text-red-500 shrink-0" />
+                  <span className="hidden lg:inline">Download PDF</span>
+                  <span className="lg:hidden">PDF</span>
+                </button>
+                <button
+                  onClick={() => showInfo('Fitur Download Excel sedang diproses...')}
+                  className="flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 dark:border-[#2e303a] rounded-xl text-gray-600 dark:text-gray-400 hover:text-[#05A845] hover:bg-[#EAF6ED] dark:hover:bg-[#05A845]/10 transition-colors text-[13px] font-medium whitespace-nowrap"
+                >
+                  <FileSpreadsheet size={16} className="text-[#05A845] shrink-0" />
+                  <span className="hidden lg:inline">Download Excel</span>
+                  <span className="lg:hidden">Excel</span>
+                </button>
+              </div>
+            </div>
+            </div>
+
+            <div className="relative w-full">
+              <Search size={17} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 pointer-events-none" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Cari transaksi berdasarkan nama, kategori, merchant, tanggal, atau nominal..."
+                className="w-full h-11 rounded-xl border border-gray-200 dark:border-[#2e303a] bg-white dark:bg-[#1f2028] pl-11 pr-4 text-[13px] font-medium text-[#1A1A1A] dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 outline-none transition-colors focus:border-[#05A845] focus:ring-2 focus:ring-[#05A845]/10"
+              />
+            </div>
+          </div>
+
+          {/* Mobile card konten */}
+          <div className="md:hidden p-4 space-y-3">
+            {filteredData.length === 0 ? (
+              <EmptyState
+                icon="empty"
+                title="Belum ada transaksi"
+                message="Mulai dengan menambahkan transaksi pertamamu."
+                buttonText="Tambah Transaksi"
+                onButtonClick={() => {
+                  setEditingData(null);
+                  setManualType('expense');
+                  setIsManualOpen(true);
+                  setNominalInput('');
+                }}
+              />
+            ) : (
+              paginatedData.map((trx) => (
+                <div
+                  key={trx.id}
+                  onClick={() => toggleRow(trx.id)}
+                  className={`rounded-2xl border app-divider p-4 transition-colors cursor-pointer ${expandedRow === trx.id ? 'bg-gray-50 dark:bg-white/[0.03]' : 'bg-white dark:bg-[#1f2028]'}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12px] app-muted mb-1 break-words">{trx.date}</p>
+                      <h4 className="text-[15px] font-bold app-heading break-words">{trx.title}</h4>
+                      <p className="text-[13px] app-muted break-words">{trx.merchant}</p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className={`text-[14px] font-bold whitespace-nowrap ${trx.type === 'income' ? 'text-[#05A845]' : 'text-red-500'}`}>
+                        {trx.type === 'income' ? '' : '-'} {formatIDR(trx.amount)}
+                      </p>
+                      <button className="mt-1 text-gray-400 dark:text-gray-500 p-1">
+                        {expandedRow === trx.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="px-3 py-1 app-chip rounded-lg text-[12px] font-semibold break-words">
+                      {trx.category}
+                    </span>
+                  </div>
+
+                  {expandedRow === trx.id && (
+                    <div className="mt-4 pt-4 border-t app-divider animate-in fade-in slide-in-from-top-2 duration-300">
+                      <p className="text-[12px] font-bold text-gray-400 uppercase tracking-wider mb-2">Catatan Transaksi</p>
+                      <p className="text-[#1A1A1A] dark:text-white text-[14px] leading-relaxed mb-4 break-words">{trx.note || '-'}</p>
+
+                      {trx.hasReceipt && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); showInfo('Menampilkan bukti/struk transaksi...'); }}
+                          className="flex items-center justify-center gap-2 px-3 py-2 app-card-soft rounded-lg text-[#05A845] text-[13px] font-medium hover:bg-[#EAF6ED] dark:hover:bg-[#05A845]/10 hover:border-[#05A845]/30 transition-colors w-full mb-3"
+                        >
+                          <FileText size={16} /> Lihat Bukti/Struk
+                        </button>
+                      )}
+
+                      <div className="grid grid-cols-1 gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleEditTransaction(trx); }}
+                          className="flex items-center justify-center gap-2 px-4 py-2 bg-[#EAF6ED] dark:bg-[#05A845]/10 text-[#05A845] rounded-xl text-[13px] font-semibold hover:bg-[#d1ebd6] dark:hover:bg-[#05A845]/20 transition-colors w-full"
+                        >
+                          <Pencil size={16} /> Edit Transaksi
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDelete(trx.id); }}
+                          className="flex items-center justify-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 rounded-xl text-[13px] font-semibold hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors w-full"
+                        >
+                          <Trash2 size={16} /> Hapus
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Desktop table content */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="min-w-[640px] w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b app-divider text-[12px] font-bold text-gray-400 uppercase tracking-wider bg-white dark:bg-[#1f2028]">
+                  <th className="px-6 py-4 font-semibold">
+                    <button
+                      type="button"
+                      onClick={toggleDateSort}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 -mx-2 transition-colors hover:bg-gray-50 dark:hover:bg-white/[0.04] hover:text-[#05A845] ${['terbaru', 'terlama'].includes(sortFilter) ? 'text-[#05A845]' : ''}`}
+                    >
+                      Tanggal
+                      <ChevronDown size={14} className={`transition-transform ${sortFilter === 'terlama' ? 'rotate-180' : ''}`} />
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 font-semibold">Deskripsi</th>
+                  <th className="px-6 py-4 font-semibold">Merchant</th>
+                  <th className="px-6 py-4 font-semibold">Kategori</th>
+                  <th className="px-6 py-4 font-semibold text-right">
+                    <button
+                      type="button"
+                      onClick={toggleAmountSort}
+                      className={`ml-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 -mx-2 transition-colors hover:bg-gray-50 dark:hover:bg-white/[0.04] hover:text-[#05A845] ${['terbesar', 'terkecil'].includes(sortFilter) ? 'text-[#05A845]' : ''}`}
+                    >
+                      Nominal
+                      <ChevronDown size={14} className={`transition-transform ${sortFilter === 'terkecil' ? 'rotate-180' : ''}`} />
+                    </button>
+                  </th>
+                  <th className="px-6 py-4"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y app-divider">
+                {filteredData.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="py-12 text-center text-gray-500 dark:text-gray-400 text-[14px]">Tidak ada transaksi ditemukan.</td>
+                  </tr>
+                ) : (
+                  paginatedData.map((trx) => (
+                    <React.Fragment key={trx.id}>
+                      <tr
+                        onClick={() => toggleRow(trx.id)}
+                        className={`app-hover transition-colors cursor-pointer group ${
+                          expandedRow === trx.id ? 'bg-gray-50 dark:bg-white/[0.04]' : 'bg-white dark:bg-[#1f2028]'
+                        }`}
+                      >
+                        <td className="px-6 py-4 text-[14px] app-muted whitespace-nowrap">{trx.date}</td>
+                        <td className="px-6 py-4 min-w-0">
+                          <p className="text-[15px] font-bold app-heading truncate max-w-[180px]">{trx.title}</p>
+                        </td>
+                        <td className="px-6 py-4 min-w-0">
+                          <p className="text-[14px] app-muted truncate max-w-[150px]">{trx.merchant}</p>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="px-3 py-1 app-chip rounded-lg text-[12px] font-semibold whitespace-nowrap">{trx.category}</span>
+                        </td>
+                        <td className={`px-6 py-4 text-[15px] font-bold text-right whitespace-nowrap ${trx.type === 'income' ? 'text-[#05A845]' : 'text-red-500'}`}>
+                          {trx.type === 'income' ? '' : '-'} {formatIDR(trx.amount)}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button className="text-gray-400 group-hover:text-[#1A1A1A] dark:group-hover:text-white transition-colors p-1">
+                            {expandedRow === trx.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                          </button>
+                        </td>
+                      </tr>
+
+                      {expandedRow === trx.id && (
+                        <tr className="bg-gray-50 dark:bg-white/[0.03] border-t-0 animate-in fade-in slide-in-from-top-2 duration-300">
+                          <td colSpan="6" className="px-6 pb-6 pt-2">
+                            <div className="app-card rounded-xl p-5 flex flex-col md:flex-row justify-between gap-6">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12px] font-bold text-gray-400 uppercase tracking-wider mb-2">Catatan Transaksi</p>
+                                <p className="text-[#1A1A1A] dark:text-white text-[14px] leading-relaxed mb-4 break-words">{trx.note || '-'}</p>
+                                {trx.hasReceipt && (
+                                  <button onClick={() => showInfo('Menampilkan bukti/struk transaksi...')} className="flex items-center gap-2 px-3 py-2 app-card-soft rounded-lg text-[#05A845] text-[13px] font-medium hover:bg-[#EAF6ED] dark:hover:bg-[#05A845]/10 hover:border-[#05A845]/30 transition-colors w-fit">
+                                    <FileText size={16} /> Lihat Bukti/Struk
+                                  </button>
+                                )}
+                              </div>
+                              <div className="flex md:flex-col gap-3 justify-end shrink-0 border-t md:border-t-0 md:border-l app-divider pt-4 md:pt-0 md:pl-6 mt-2 md:mt-0">
+                                <button onClick={() => handleEditTransaction(trx)} className="flex items-center justify-center gap-2 px-4 py-2 bg-[#EAF6ED] dark:bg-[#05A845]/10 text-[#05A845] rounded-xl text-[13px] font-semibold hover:bg-[#d1ebd6] dark:hover:bg-[#05A845]/20 transition-colors w-full">
+                                  <Pencil size={16} /> Edit Transaksi
+                                </button>
+                                <button onClick={() => handleDelete(trx.id)} className="flex items-center justify-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 rounded-xl text-[13px] font-semibold hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors w-full">
+                                  <Trash2 size={16} /> Hapus
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="px-4 sm:px-6 py-4 border-t app-divider flex flex-col sm:flex-row justify-between items-center gap-4 text-[13px] app-muted bg-white dark:bg-[#1f2028] rounded-b-[24px]">
+            <p className="font-medium text-center sm:text-left break-words">
+              Menampilkan <span className="font-bold text-[#1A1A1A] dark:text-white">{visibleStart} - {visibleEnd}</span> dari <span className="font-bold text-[#1A1A1A] dark:text-white">{filteredData.length}</span> transaksi
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={safeCurrentPage === 1}
+                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-[#2e303a] text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] hover:text-[#1A1A1A] dark:hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft size={16} />
+              </button>
+
+              {pageButtons.map((page) => (
+                <button
+                  key={page}
+                  type="button"
+                  onClick={() => setCurrentPage(page)}
+                  className={`w-8 h-8 flex items-center justify-center rounded-lg font-bold transition-colors ${
+                    safeCurrentPage === page
+                      ? 'bg-[#05A845] text-white shadow-sm'
+                      : 'border border-gray-200 dark:border-[#2e303a] text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] hover:text-[#1A1A1A] dark:hover:text-white'
+                  }`}
+                >
+                  {page}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                disabled={safeCurrentPage === totalPages}
+                onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-[#2e303a] text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.04] hover:text-[#1A1A1A] dark:hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+            </>
+          )}
+        </div>
+
+      </>
+        )}
+      </div>
+
+      <TransactionModal
+        isOpen={isManualOpen}
+        onClose={() => setIsManualOpen(false)}
+        editingData={editingData}
+        manualType={manualType}
+        setManualType={setManualType}
+        nominalInput={nominalInput}
+        handleNominalChange={handleNominalChange}
+        onSaveTransaction={handleSaveTransaction}
+      />
+
+      <SmartAIModal
+        isOpen={isSmartOpen}
+        onClose={closeSmartModal}
+        smartStep={smartStep}
+        onFileSelected={handleFileSelected}
+        handleSaveSmartAI={handleSaveSmartAI}
+        scanResult={scanResult}
+        triggerSimulateAI={handleSimulateAI}
+      />
+
+    </AppLayout>
+  );
+}
