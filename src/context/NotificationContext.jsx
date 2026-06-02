@@ -67,10 +67,7 @@ const normalizeNotification = (notification) => {
   };
 };
 
-const initialNotifications = mockNotifications.map((notification) => ({
-  ...notification,
-  ...(notificationStyleByType[notification.type] || notificationStyleByType.insight),
-}));
+const initialNotifications = [];
 
 export function NotificationProvider({ children }) {
   const [notifications, setNotifications] = useState(initialNotifications);
