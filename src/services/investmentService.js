@@ -1,6 +1,48 @@
 import api, { USE_MOCKS } from './api';
 import { mockRecommendations } from './mockData';
 
+const COMMODITY_LISTING_CACHE_KEY = 'finly:commodity:listing:v1';
+const COMMODITY_ANTAM_CACHE_KEY = 'finly:commodity:antam:v1';
+const COMMODITY_DETAIL_CACHE_PREFIX = 'finly:commodity:detail:v1:';
+const COMMODITY_PRICES_CACHE_PREFIX = 'finly:commodity:prices:v1:';
+const COMMODITY_NEWS_CACHE_PREFIX = 'finly:commodity:news:v1:';
+const COMMODITY_CACHE_TTL_MS = 30 * 60 * 1000;
+const memoryCache = new Map();
+
+const getCachedPayload = (key, ttlMs = COMMODITY_CACHE_TTL_MS) => {
+  const now = Date.now();
+  const memory = memoryCache.get(key);
+  if (memory && now - memory.savedAt <= ttlMs) return memory.payload;
+
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.savedAt || now - parsed.savedAt > ttlMs) return null;
+    memoryCache.set(key, parsed);
+    return parsed.payload;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const setCachedPayload = (key, payload) => {
+  const record = { savedAt: Date.now(), payload };
+  memoryCache.set(key, record);
+  try {
+    localStorage.setItem(key, JSON.stringify(record));
+  } catch (_error) {
+    // Ignore storage quota/private mode issues.
+  }
+  return payload;
+};
+
+export const getCachedCommodityListing = () => getCachedPayload(COMMODITY_LISTING_CACHE_KEY);
+export const getCachedCommodityAntam = () => getCachedPayload(COMMODITY_ANTAM_CACHE_KEY);
+export const getCachedCommodityDetail = (symbolOrSlug) => getCachedPayload(`${COMMODITY_DETAIL_CACHE_PREFIX}${symbolOrSlug}`);
+export const getCachedCommodityPrices = (symbol, range = '6M') => getCachedPayload(`${COMMODITY_PRICES_CACHE_PREFIX}${symbol}:${range}`);
+export const getCachedCommodityNews = (symbol, limit = 8) => getCachedPayload(`${COMMODITY_NEWS_CACHE_PREFIX}${symbol}:${limit}`);
+
 const mockAnswerScores = {
   q_loss_reaction: {
     jual_semua: 0,
@@ -169,3 +211,33 @@ export const getInvestmentProductAnalysis = async (type, symbol) => {
   const response = await api.get(`/investments/products/${type}/${encodeURIComponent(symbol)}/analysis`);
   return response.data;
 };
+
+export const getCommodityListing = async (params = {}) => {
+  const response = await api.get('/commodity', { params });
+  return setCachedPayload(COMMODITY_LISTING_CACHE_KEY, response.data);
+};
+
+export const getCommodityAntam = async () => {
+  const response = await api.get('/commodity/antam');
+  return setCachedPayload(COMMODITY_ANTAM_CACHE_KEY, response.data);
+};
+
+export const getCommodityDetail = async (symbolOrSlug) => {
+  const response = await api.get(`/commodity/${encodeURIComponent(symbolOrSlug)}`);
+  return setCachedPayload(`${COMMODITY_DETAIL_CACHE_PREFIX}${symbolOrSlug}`, response.data);
+};
+
+export const getCommodityPrices = async (symbol, range = '6M') => {
+  const response = await api.get(`/commodity/${encodeURIComponent(symbol)}/prices`, {
+    params: { range },
+  });
+  return setCachedPayload(`${COMMODITY_PRICES_CACHE_PREFIX}${symbol}:${range}`, response.data);
+};
+
+export const getCommodityNews = async (symbol, limit = 8) => {
+  const response = await api.get(`/commodity/${encodeURIComponent(symbol)}/news`, {
+    params: { limit },
+  });
+  return setCachedPayload(`${COMMODITY_NEWS_CACHE_PREFIX}${symbol}:${limit}`, response.data);
+};
+

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, ArrowRight, Bell, Bitcoin, Heart, Info, Lightbulb,
-  Newspaper, RotateCcw, Search, ShieldCheck, Sparkles,
-  Target, TrendingUp, TriangleAlert,
+  ArrowLeft, ArrowRight, BadgeDollarSign, Banknote, Bell, Bitcoin,
+  CalendarDays, Gem, Heart, Info, Lightbulb, Newspaper, RotateCcw,
+  Search, ShieldCheck, Sparkles, Target, TrendingUp, TriangleAlert,
 } from 'lucide-react';
 import AppLayout from '../components/AppLayout';
 import RiskQuiz, { INVESTMENT_QUIZ_TOTAL_STEPS } from '../components/investasi/RiskQuiz';
@@ -18,6 +18,16 @@ import {
 } from '../services/mockData';
 import {
   getInvestmentAnalysisDetail,
+  getCommodityAntam,
+  getCachedCommodityAntam,
+  getCachedCommodityDetail,
+  getCachedCommodityListing,
+  getCachedCommodityNews,
+  getCachedCommodityPrices,
+  getCommodityDetail,
+  getCommodityListing,
+  getCommodityNews,
+  getCommodityPrices,
   getInvestmentMarketByRisk,
   getInvestmentProductAnalysis,
   submitRiskQuiz,
@@ -63,7 +73,7 @@ const categoryMetaById = {
     label: 'Investasi Aman',
     iconKey: 'shield',
     color: 'bg-green-50 dark:bg-[#05A845]/10 text-[#05A845]',
-    items: 'Reksa dana, SBN Ritel, dan logam mulia dari database.',
+    items: 'Reksa dana, SBN Ritel, dan komoditas untuk fondasi portofolio.',
   },
   middle: {
     id: 'middle',
@@ -193,7 +203,7 @@ const scoreRowsFromObject = (source, fallbackRows) => {
 
 const unwrapAnalysis = (analysisResponse) => {
   const payload = analysisResponse?.data || analysisResponse || {};
-  const raw = payload.analysis || {};
+  const raw = payload.analysis || payload.data?.analysis || payload.data || {};
   const nested = raw.data || raw.analysis || raw.result || raw;
   return {
     payload,
@@ -203,53 +213,55 @@ const unwrapAnalysis = (analysisResponse) => {
 
 const lowRiskTypeFromProduct = (product) => {
   if (product.investment_type === 'sbn' || product.investment_type === 'bond') return 'SBN Ritel';
-  if (product.investment_type === 'gold') return 'Emas';
+  if (product.investment_type === 'gold' || product.investment_type === 'commodity') return 'Komoditas';
   return 'Reksadana';
 };
 
 const allocationPercentByLowRiskType = {
   Reksadana: 20,
   'SBN Ritel': 30,
-  Emas: 20,
+  Komoditas: 20,
 };
 
 const lowRiskInstrumentFromProduct = (product) => {
   const metadata = product.metadata || {};
   const type = lowRiskTypeFromProduct(product);
-  const isGold = type === 'Emas';
+  const isCommodity = type === 'Komoditas';
+  const isPhysicalCommodity = Boolean(metadata.is_physical || metadata.slug === 'emas-antam');
   const antamPrice = Number(metadata.price_idr || metadata.buy_price || metadata.harga_beli || metadata.harga_per_gram || 0);
   const antamBuyback = Number(metadata.buyback_idr || metadata.sell_price || metadata.harga_jual || 0);
+  const commodityPrice = Number(metadata.current_price || metadata.price || metadata.latest_close || 0);
   const spreadPct = Number.isFinite(Number(metadata.spread_pct))
     ? Number(metadata.spread_pct)
     : antamPrice > 0 && antamBuyback > 0
       ? ((antamPrice - antamBuyback) / antamPrice) * 100
       : 0;
-  const return1y = parsePercent(
+  const return1y = isCommodity ? undefined : parsePercent(
     metadata.return_1th_pct ||
     metadata.return_est_yoy_pct ||
     metadata.return_est_pct ||
     product.expected_return_value ||
     product.expected_return_note
   );
-  const return1m = parsePercent(metadata.return_1bl_pct || metadata.return_1m_pct);
-  const return3y = parsePercent(metadata.return_3th_pct || metadata.return_3y_pct || return1y * 3);
+  const return1m = isCommodity ? undefined : parsePercent(metadata.return_1bl_pct || metadata.return_1m_pct);
+  const return3y = isCommodity ? undefined : parsePercent(metadata.return_3th_pct || metadata.return_3y_pct || return1y * 3);
 
   return {
     code: product.symbol || product.name,
     productType: product.investment_type,
-    apiType: product.investment_type === 'gold' ? 'gold' : product.investment_type === 'sbn' || product.investment_type === 'bond' ? 'sbn' : 'mutual_fund',
+    apiType: isCommodity ? 'commodity' : product.investment_type === 'sbn' || product.investment_type === 'bond' ? 'sbn' : 'mutual_fund',
     name: product.name,
     provider: metadata.manajer_investasi || metadata.provider || metadata.issuer || metadata.penerbit || metadata.sumber || 'Finly Market Data',
     type,
     kind: metadata.jenis_reksadana || metadata.asset_class || product.investment_type,
-    kindLabel: isGold ? 'Logam Mulia' : formatFundTypeLabel(metadata.jenis_reksadana || metadata.asset_class || product.investment_type),
+    kindLabel: isCommodity ? metadata.category_label || 'Komoditas' : formatFundTypeLabel(metadata.jenis_reksadana || metadata.asset_class || product.investment_type),
     horizon: return3y ? '3 Tahun' : return1m ? '1 Bulan' : '1 Tahun',
     return1y,
     return1m,
     return3y,
     minimum: Number(product.minimum_amount || metadata.minimum_amount || metadata.min_pembelian || antamPrice || 10000),
-    risk: metadata.profil_risiko_rd || metadata.risk || metadata.kategori_profil_risiko || 'Rendah',
-    nav: Number(metadata.nab_per_unit || antamPrice || metadata.harga_beli || metadata.buy_price || metadata.harga_per_gram || 0),
+    risk: metadata.profil_risiko_rd || metadata.risk || metadata.kategori_profil_risiko || (isCommodity ? 'Rendah-Menengah' : 'Rendah'),
+    nav: Number(metadata.nab_per_unit || antamPrice || commodityPrice || metadata.harga_beli || metadata.buy_price || metadata.harga_per_gram || 0),
     sharia: Boolean(metadata.is_syariah || metadata.syariah),
     rank: Number(metadata.rank_dalam_jenis || metadata.rank || 0),
     pipelineScore: Number(product.score || metadata.skor_reksadana || metadata.skor_pipeline || 0),
@@ -260,9 +272,176 @@ const lowRiskInstrumentFromProduct = (product) => {
     buybackIdr: antamBuyback,
     spreadPct,
     denominationGram: Number(metadata.denomination_gram || metadata.berat_gram || 0),
-    realtimeSource: Boolean(metadata.realtime_source || isGold),
+    realtimeSource: Boolean(metadata.realtime_source || isCommodity),
+    sourceLabel: metadata.source || (isCommodity ? 'Harga pasar dapat tertunda' : 'Data tersedia'),
+    commoditySymbol: metadata.commodity_symbol,
+    commoditySlug: metadata.slug,
+    commodityCategory: metadata.category,
+    commodityCategoryLabel: metadata.category_label,
+    commodityPrice,
+    commodityCurrency: metadata.currency || 'USD',
+    commodityTargetPrice: Number(metadata.target_price || 0),
+    commodityUpsidePct: Number(metadata.upside_pct || 0),
+    commodityChangePct: Number(metadata.change_pct || 0),
+    commodityScore: Number(metadata.overall_score || product.score || 0),
+    commodityFundamental: Number(metadata.fundamental_score || 0),
+    commodityTechnical: Number(metadata.technical_score || 0),
+    commoditySentiment: metadata.sentiment_label,
+    commodityExchange: metadata.exchange,
+    commodityUnit: metadata.unit,
+    commodityContractSize: metadata.contract_size,
+    isPhysicalCommodity,
     raw: product,
   };
+};
+
+const findAntamDenomination = (antamData, gram = 1) => {
+  const denominations = antamData?.data?.denominations || antamData?.denominations || [];
+  return denominations.find((item) => Number(item.denomination_gram ?? item.gram) === gram)
+    || denominations.find((item) => Number(item.denomination_gram ?? item.gram) > 0)
+    || null;
+};
+
+const commodityInstrumentFromApi = (commodity, antamData = null) => {
+  const isPhysicalCommodity = Boolean(commodity?.is_physical || commodity?.slug === 'emas-antam');
+  const antamOneGram = isPhysicalCommodity ? findAntamDenomination(antamData, 1) : null;
+  const priceIdr = Number(antamOneGram?.price_idr || commodity?.current_price || 0);
+  const buybackIdr = Number(antamOneGram?.buyback_idr || 0);
+  const spreadPct = priceIdr > 0 && buybackIdr > 0
+    ? ((priceIdr - buybackIdr) / priceIdr) * 100
+    : 0;
+  const categoryLabel = commodityCategoryLabels[commodity?.category] || commodity?.category || 'Komoditas';
+  const name = isPhysicalCommodity ? 'Emas Antam' : (commodity?.name || commodity?.name_id || commodity?.symbol);
+  const nameId = commodity?.name_id || commodity?.name || '';
+
+  return {
+    code: commodity?.slug || commodity?.symbol || name,
+    productType: 'commodity',
+    apiType: 'commodity',
+    name,
+    provider: isPhysicalCommodity ? 'Fisik Indonesia' : [commodity?.symbol, nameId].filter(Boolean).join(' - '),
+    type: 'Komoditas',
+    kind: 'commodity',
+    kindLabel: categoryLabel,
+    horizon: 'Semua',
+    return1y: undefined,
+    return1m: undefined,
+    return3y: undefined,
+    minimum: priceIdr || Number(commodity?.current_price || 0) || 10000,
+    risk: isPhysicalCommodity ? 'Fisik Indonesia' : categoryLabel,
+    nav: priceIdr || Number(commodity?.current_price || 0),
+    sharia: false,
+    rank: 0,
+    pipelineScore: Number(commodity?.overall_score || 0),
+    allocationPercent: 20,
+    description: isPhysicalCommodity
+      ? 'Emas fisik Antam dengan harga jual, per gram, dan buyback dari sumber lokal.'
+      : `${nameId || name} adalah komoditas ${categoryLabel.toLowerCase()} dengan harga pasar yang dapat tertunda dan analisis edukatif.`,
+    sourceDate: antamOneGram?.date || commodity?.analysis_date,
+    priceIdr,
+    buybackIdr,
+    spreadPct,
+    denominationGram: Number(antamOneGram?.denomination_gram ?? antamOneGram?.gram ?? 1),
+    realtimeSource: true,
+    sourceLabel: isPhysicalCommodity ? 'Harga emas fisik mengikuti data Antam/sumber lokal yang tersedia.' : 'Data harga pasar dari penyedia data publik dan dapat tertunda.',
+    commoditySymbol: commodity?.symbol,
+    commoditySlug: commodity?.slug || commodity?.symbol,
+    commodityNameId: nameId,
+    commodityCategory: commodity?.category,
+    commodityCategoryLabel: categoryLabel,
+    commodityPrice: Number(commodity?.current_price || 0),
+    commodityCurrency: commodity?.currency || (isPhysicalCommodity ? 'IDR' : 'USD'),
+    commodityTargetPrice: Number(commodity?.target_price || 0),
+    commodityUpsidePct: Number(commodity?.upside_pct || 0),
+    commodityChangePct: Number(commodity?.change_pct || 0),
+    commodityScore: Number(commodity?.overall_score || 0),
+    commodityFundamental: Number(commodity?.fundamental_score || 0),
+    commodityTechnical: Number(commodity?.technical_score || 0),
+    commoditySentiment: commodity?.sentiment_label,
+    commodityExchange: commodity?.exchange,
+    commodityUnit: commodity?.unit,
+    commodityContractSize: commodity?.contract_size,
+    isPhysicalCommodity,
+    antamDenominations: antamData?.data?.denominations || antamData?.denominations || [],
+    listingRaw: commodity,
+  };
+};
+
+const buildCommodityStateFromResponses = (listingResponse, antamResponse) => {
+  const commodities = listingResponse?.data?.commodities || [];
+  const instruments = commodities.map((commodity) => commodityInstrumentFromApi(commodity, antamResponse));
+  return {
+    loading: false,
+    refreshing: false,
+    error: null,
+    instruments,
+    total: instruments.filter((instrument) => !instrument.isPhysicalCommodity).length,
+    cached: listingResponse?.data?.cached,
+  };
+};
+
+const lowRiskSearchPlaceholder = {
+  Reksadana: 'Cari nama reksadana...',
+  'SBN Ritel': 'Cari seri SBN...',
+  Komoditas: 'Cari komoditas...',
+};
+
+const lowRiskEmptyCopy = {
+  Reksadana: 'Tidak ada reksadana sesuai filter',
+  'SBN Ritel': 'Tidak ada SBN tersedia',
+  Komoditas: 'Tidak ada komoditas sesuai sentimen',
+};
+
+const lowRiskDataStatusLabel = (activeClass, hasServerData, isRefreshing) => {
+  if (isRefreshing) return 'Memperbarui data...';
+  if (activeClass === 'Komoditas') return 'Harga dapat tertunda';
+  return hasServerData ? 'Data tersedia' : 'Data sementara';
+};
+
+const getSbnCoupon = (instrument) => (
+  instrument.coupon
+  || instrument.couponRate
+  || instrument.kupon
+  || instrument.metadata?.coupon
+  || instrument.metadata?.kupon
+  || instrument.metadata?.coupon_rate
+  || instrument.return1y
+);
+
+const getSbnTenor = (instrument) => (
+  instrument.tenor
+  || instrument.metadata?.tenor
+  || instrument.metadata?.tenor_years
+  || instrument.metadata?.tenor_tahun
+  || '-'
+);
+
+const getSbnMaturity = (instrument) => (
+  instrument.maturityDate
+  || instrument.maturity
+  || instrument.dueDate
+  || instrument.metadata?.maturity_date
+  || instrument.metadata?.jatuh_tempo
+  || '-'
+);
+
+const getSbnType = (instrument) => {
+  const raw = String(
+    instrument.sbnType
+    || instrument.metadata?.coupon_type
+    || instrument.metadata?.tipe_kupon
+    || instrument.kind
+    || ''
+  ).toLowerCase();
+  if (raw.includes('floating') || raw.includes('mengambang')) return 'Floating';
+  if (raw.includes('fixed') || raw.includes('tetap')) return 'Fixed';
+  return instrument.kindLabel || instrument.kind || 'SBN Ritel';
+};
+
+const formatSbnCoupon = (instrument) => {
+  const coupon = Number(getSbnCoupon(instrument));
+  if (!Number.isFinite(coupon)) return '-';
+  return `${coupon > 0 ? '+' : ''}${coupon.toFixed(1)}%`;
 };
 
 const formatFundTypeLabel = (value) => {
@@ -490,9 +669,9 @@ const lowRiskClassOptions = [
     icon: <Target size={22} />,
   },
   {
-    value: 'Emas',
-    label: 'Logam Mulia',
-    description: 'Emas sebagai lindung nilai jangka panjang.',
+    value: 'Komoditas',
+    label: 'Komoditas',
+    description: 'Aset riil seperti emas, energi, logam, dan pangan.',
     icon: <Sparkles size={22} />,
   },
 ];
@@ -621,8 +800,10 @@ const lowRiskInstruments = [
     code: 'EMAS-DIGI',
     name: 'Emas Digital',
     provider: 'Aset Lindung Nilai',
-    type: 'Emas',
-    kind: 'Emas',
+    type: 'Komoditas',
+    kind: 'Komoditas',
+    kindLabel: 'Logam Mulia',
+    apiType: 'commodity',
     horizon: '1 Bulan',
     return1y: 7.2,
     return1m: 0.7,
@@ -635,7 +816,28 @@ const lowRiskInstruments = [
     pipelineScore: 0.24,
     allocationPercent: 20,
     description: 'Emas dapat dipakai sebagai pelindung nilai dan penyeimbang saat pasar aset bertumbuh sedang berfluktuasi.',
+    commodityCurrency: 'IDR',
+    isPhysicalCommodity: true,
   },
+];
+
+const commodityCategoryOrder = ['precious_metals', 'industrial_metals', 'energy', 'grains', 'livestock', 'softs'];
+const commodityCategoryLabels = {
+  precious_metals: 'Logam Mulia',
+  industrial_metals: 'Logam Industri',
+  energy: 'Energi',
+  grains: 'Biji-bijian',
+  livestock: 'Ternak',
+  softs: 'Soft Commodities',
+  physical_id: 'Emas Fisik Indonesia',
+};
+const commoditySentimentOptions = [
+  { value: '', label: 'Semua' },
+  { value: 'strongly_bullish', label: 'Sangat Bullish' },
+  { value: 'moderately_bullish', label: 'Bullish' },
+  { value: 'neutral', label: 'Netral' },
+  { value: 'moderately_bearish', label: 'Bearish' },
+  { value: 'strongly_bearish', label: 'Sangat Bearish' },
 ];
 
 const isCryptoAsset = (stock) => stock?.market === 'CRYPTO';
@@ -1635,8 +1837,20 @@ function LowRiskSection({
   const [activeClass, setActiveClass] = useState('Reksadana');
   const [returnPeriod, setReturnPeriod] = useState('1 Tahun');
   const [fundType, setFundType] = useState('Semua');
+  const [commoditySentiment, setCommoditySentiment] = useState('');
+  const [commodityState, setCommodityState] = useState({
+    loading: false,
+    refreshing: false,
+    error: null,
+    instruments: [],
+    total: 0,
+    cached: null,
+  });
   const normalizedQuery = query.trim().toLowerCase();
-  const sourceInstruments = instruments?.length ? instruments : lowRiskInstruments;
+  const originalInstruments = instruments?.length ? instruments : lowRiskInstruments;
+  const sourceInstruments = activeClass === 'Komoditas'
+    ? commodityState.instruments
+    : originalInstruments;
   const fundTypeOptions = useMemo(() => {
     const kinds = Array.from(new Set(
       sourceInstruments
@@ -1649,10 +1863,94 @@ function LowRiskSection({
       { value: 'Semua', label: 'Semua jenis' },
       ...kinds.map((kind) => ({ value: kind, label: formatFundTypeLabel(kind) })),
     ];
-  }, [sourceInstruments]);
+  }, [originalInstruments]);
+
+  useEffect(() => {
+    let ignore = false;
+    if (activeClass !== 'Komoditas') return undefined;
+
+    const cachedListing = getCachedCommodityListing();
+    const cachedAntam = getCachedCommodityAntam();
+    if (cachedListing) {
+      setCommodityState({
+        ...buildCommodityStateFromResponses(cachedListing, cachedAntam),
+        refreshing: true,
+      });
+    } else {
+      setCommodityState((prev) => ({
+        ...prev,
+        loading: !prev.instruments.length,
+        refreshing: false,
+        error: null,
+      }));
+    }
+
+    Promise.all([getCommodityListing(), getCommodityAntam()])
+      .then(([listingResponse, antamResponse]) => {
+        if (ignore) return;
+        setCommodityState(buildCommodityStateFromResponses(listingResponse, antamResponse));
+      })
+      .catch((error) => {
+        if (ignore) return;
+        setCommodityState((prev) => ({
+          loading: false,
+          refreshing: false,
+          error: error?.response?.data?.message || error.message || 'Data komoditas belum tersedia.',
+          instruments: prev.instruments,
+          total: prev.total,
+          cached: prev.cached,
+        }));
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeClass]);
+
+  useEffect(() => {
+    if (activeClass !== 'Komoditas' || !commodityState.instruments.length) return undefined;
+    let cancelled = false;
+    const futures = commodityState.instruments.filter((instrument) => (
+      instrument.type === 'Komoditas'
+      && !instrument.isPhysicalCommodity
+      && (instrument.commoditySlug || instrument.commoditySymbol || instrument.code)
+    ));
+
+    const prefetch = async () => {
+      for (const instrument of futures) {
+        if (cancelled) break;
+        const detailKey = instrument.commoditySlug || instrument.code;
+        const symbol = instrument.commoditySymbol || detailKey;
+        try {
+          if (!getCachedCommodityDetail(detailKey)) {
+            await getCommodityDetail(detailKey);
+          }
+          if (!getCachedCommodityPrices(symbol, '6M')) {
+            await getCommodityPrices(symbol, '6M');
+          }
+          if (!getCachedCommodityNews(symbol, 8)) {
+            await getCommodityNews(symbol, 8);
+          }
+        } catch (_error) {
+          // Prefetch is opportunistic; detail page still handles its own fallback.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+    };
+
+    prefetch();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeClass, commodityState.instruments]);
+
   const filteredInstruments = sourceInstruments.filter((instrument) => {
     const matchesClass = instrument.type === activeClass;
-    const matchesPeriod = returnPeriod === 'Semua'
+    const matchesCommoditySentiment = activeClass !== 'Komoditas'
+      || !commoditySentiment
+      || String(instrument.commoditySentiment || '').toLowerCase() === commoditySentiment;
+    const matchesPeriod = activeClass !== 'Reksadana'
+      || returnPeriod === 'Semua'
       || instrument.horizon === returnPeriod
       || (returnPeriod === '1 Tahun' && Number.isFinite(Number(instrument.return1y)))
       || (returnPeriod === '1 Bulan' && Number.isFinite(Number(instrument.return1m)))
@@ -1663,10 +1961,24 @@ function LowRiskSection({
     const matchesQuery = !normalizedQuery
       || instrument.name.toLowerCase().includes(normalizedQuery)
       || instrument.provider.toLowerCase().includes(normalizedQuery)
-      || instrument.type.toLowerCase().includes(normalizedQuery);
+      || instrument.type.toLowerCase().includes(normalizedQuery)
+      || String(instrument.commoditySymbol || '').toLowerCase().includes(normalizedQuery)
+      || String(instrument.commodityNameId || '').toLowerCase().includes(normalizedQuery);
 
-    return matchesClass && matchesPeriod && matchesFundType && matchesQuery;
+    return matchesClass && matchesPeriod && matchesFundType && matchesCommoditySentiment && matchesQuery;
   });
+  const commodityAntam = filteredInstruments.find((instrument) => instrument.type === 'Komoditas' && instrument.isPhysicalCommodity);
+  const commodityFutures = filteredInstruments.filter((instrument) => instrument.type === 'Komoditas' && !instrument.isPhysicalCommodity);
+  const commodityGroups = commodityCategoryOrder
+    .map((category) => ({
+      category,
+      label: commodityCategoryLabels[category] || category,
+      items: commodityFutures.filter((instrument) => instrument.commodityCategory === category),
+    }))
+    .filter((group) => group.items.length > 0);
+  const activeClassLabel = lowRiskClassOptions.find((item) => item.value === activeClass)?.label || activeClass;
+  const dataStatusLabel = lowRiskDataStatusLabel(activeClass, Boolean(instruments?.length), commodityState.refreshing);
+  const emptyCopy = lowRiskEmptyCopy[activeClass] || 'Instrumen tidak ditemukan';
 
   if (selectedInstrument) {
     return (
@@ -1685,14 +1997,14 @@ function LowRiskSection({
           <p className="text-[12px] font-bold uppercase tracking-wider text-gray-400 mb-1">Low Risk</p>
           <h2 className="text-[22px] sm:text-[24px] font-bold page-title mb-1 break-words">Daftar Instrumen Low Risk</h2>
           <p className="page-subtitle text-[14px] sm:text-[15px] max-w-2xl break-words">
-            Instrumen konservatif untuk dana likuid, SBN ritel, dan logam mulia sebagai fondasi portofolio.
+            Instrumen konservatif untuk dana likuid, SBN ritel, dan komoditas sebagai diversifikasi portofolio.
           </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <MiniStat label="Universe" value={`${filteredInstruments.length} instrumen`} />
-          <MiniStat label="Kelas" value={lowRiskClassOptions.find((item) => item.value === activeClass)?.label || activeClass} />
-          <MiniStat label="Mode" value={instruments?.length ? 'Database' : 'Fallback'} />
+          <MiniStat label="Universe" value={`${activeClass === 'Komoditas' ? commodityState.total || commodityFutures.length : filteredInstruments.length} instrumen`} />
+          <MiniStat label="Kelas" value={activeClassLabel} />
+          <MiniStat label="Status" value={dataStatusLabel} />
         </div>
       </div>
 
@@ -1702,12 +2014,12 @@ function LowRiskSection({
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Cari nama instrumen..."
+            placeholder={lowRiskSearchPlaceholder[activeClass] || 'Cari nama instrumen...'}
             className="w-full h-12 pl-11 pr-4 app-input rounded-xl text-[14px]"
           />
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_190px_220px] gap-3">
+        <div className={`grid grid-cols-1 gap-3 ${activeClass === 'Reksadana' ? 'xl:grid-cols-[1fr_190px_220px]' : 'xl:grid-cols-[1fr_390px]'}`}>
           <div className="min-w-0">
             <div className="flex items-center">
               <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar">
@@ -1721,7 +2033,20 @@ function LowRiskSection({
                       onClick={() => {
                         setActiveClass(option.value);
                         setFundType('Semua');
+                        setCommoditySentiment('');
                         setReturnPeriod(option.value === 'Reksadana' ? '1 Tahun' : 'Semua');
+                        if (option.value === 'Komoditas' && !commodityState.instruments.length) {
+                          const cachedListing = getCachedCommodityListing();
+                          const cachedAntam = getCachedCommodityAntam();
+                          if (cachedListing) {
+                            setCommodityState({
+                              ...buildCommodityStateFromResponses(cachedListing, cachedAntam),
+                              refreshing: true,
+                            });
+                          } else {
+                            setCommodityState((prev) => ({ ...prev, loading: true, error: null }));
+                          }
+                        }
                       }}
                       className={`px-3.5 py-2 rounded-xl border text-[12px] font-bold whitespace-nowrap transition-all inline-flex items-center gap-2 ${selected
                           ? 'bg-[#05A845] border-[#05A845] text-white shadow-sm'
@@ -1737,38 +2062,87 @@ function LowRiskSection({
             </div>
           </div>
 
-          <CustomSelect
-            value={returnPeriod}
-            onChange={setReturnPeriod}
-            options={lowRiskReturnOptions}
-            buttonClassName="bg-white dark:bg-[#1f2028]"
-          />
-          <CustomSelect
-            value={fundType}
-            onChange={setFundType}
-            options={fundTypeOptions.length > 1 ? fundTypeOptions : lowRiskFundTypeOptions}
-            disabled={activeClass !== 'Reksadana'}
-            buttonClassName="bg-white dark:bg-[#1f2028]"
-          />
+          {activeClass === 'Komoditas' ? (
+            <div className="xl:col-span-2 min-w-0">
+              <div className="flex flex-wrap gap-2">
+                {commoditySentimentOptions.map((option) => {
+                  const selected = commoditySentiment === option.value;
+                  return (
+                    <button
+                      key={option.value || 'all'}
+                      type="button"
+                      onClick={() => setCommoditySentiment(option.value)}
+                      className={`px-3 py-2 rounded-xl border text-[12px] font-bold transition-all ${selected
+                        ? 'bg-[#1A1A1A] dark:bg-white text-white dark:text-[#1A1A1A] border-[#1A1A1A] dark:border-white shadow-sm'
+                        : 'bg-white dark:bg-white/[0.04] border-gray-100 dark:border-[#2e303a] app-muted hover:border-[#05A845]/30 hover:text-[#05A845]'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : activeClass === 'Reksadana' ? (
+            <>
+              <CustomSelect
+                value={returnPeriod}
+                onChange={setReturnPeriod}
+                options={lowRiskReturnOptions}
+                buttonClassName="bg-white dark:bg-[#1f2028]"
+              />
+              <CustomSelect
+                value={fundType}
+                onChange={setFundType}
+                options={fundTypeOptions.length > 1 ? fundTypeOptions : lowRiskFundTypeOptions}
+                disabled={activeClass !== 'Reksadana'}
+                buttonClassName="bg-white dark:bg-[#1f2028]"
+              />
+            </>
+          ) : (
+            <div className="hidden xl:block" />
+          )}
         </div>
 
-        <div className="mt-4 grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-3 rounded-2xl bg-[#EAF6ED] dark:bg-[#05A845]/10 border border-[#05A845]/20 p-3">
-          <div>
-            <h3 className="text-[12px] font-black app-heading mb-1">Strategi alokasi low risk</h3>
-            <p className="text-[13px] app-muted">50% RDPU + 30% SBN + 20% Emas</p>
+        {activeClass !== 'Komoditas' && (
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-3 rounded-2xl bg-[#EAF6ED] dark:bg-[#05A845]/10 border border-[#05A845]/20 p-3">
+            <div>
+              <h3 className="text-[12px] font-black app-heading mb-1">Strategi alokasi low risk</h3>
+              <p className="text-[13px] app-muted">50% RDPU + 30% SBN + 20% Komoditas</p>
+            </div>
+            <p className="text-[13px] leading-relaxed app-heading">
+              Mulai dari reksa dana pasar uang untuk dana darurat, tambah SBN saat ada penawaran baru, dan gunakan komoditas secara terbatas sebagai diversifikasi aset riil.
+            </p>
           </div>
-          <p className="text-[13px] leading-relaxed app-heading">
-            Mulai dari reksa dana pasar uang untuk dana darurat, tambah SBN saat ada penawaran baru, dan gunakan emas sebagai lindung nilai jangka panjang.
-          </p>
-        </div>
+        )}
       </div>
 
-      {filteredInstruments.length === 0 ? (
+      {activeClass === 'Komoditas' && commodityState.loading ? (
+        <div className="app-card rounded-[24px] p-10 text-center">
+          <div className="w-10 h-10 rounded-full border-4 border-[#05A845]/20 border-t-[#05A845] animate-spin mx-auto mb-3" />
+          <p className="font-bold app-heading mb-1">Memuat data komoditas</p>
+          <p className="text-[13px] app-muted">Mengambil listing dari Yahoo Finance, CFTC, dan Antam.</p>
+        </div>
+      ) : activeClass === 'Komoditas' && commodityState.error && !commodityState.instruments.length ? (
+        <div className="app-card rounded-[24px] p-10 text-center">
+          <TriangleAlert size={40} className="mx-auto text-amber-500 mb-3" />
+          <p className="font-bold app-heading mb-1">Data komoditas belum tersedia</p>
+          <p className="text-[13px] app-muted">{commodityState.error}</p>
+        </div>
+      ) : filteredInstruments.length === 0 ? (
         <div className="app-card rounded-[24px] p-10 text-center">
           <Search size={40} className="mx-auto text-gray-300 dark:text-gray-600 mb-3" />
-          <p className="font-bold app-heading mb-1">Instrumen tidak ditemukan</p>
+          <p className="font-bold app-heading mb-1">{emptyCopy}</p>
           <p className="text-[13px] app-muted">Coba ubah kata kunci atau filter low risk.</p>
         </div>
+      ) : activeClass === 'Komoditas' ? (
+        <CommodityListing
+          antam={commodityAntam}
+          groups={commodityGroups}
+          total={commodityState.total || commodityFutures.length}
+          refreshing={commodityState.refreshing}
+          onSelectInstrument={onSelectInstrument}
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredInstruments.map((instrument) => (
@@ -1785,7 +2159,75 @@ function LowRiskSection({
   );
 }
 
+function CommodityListing({ antam, groups, total, refreshing, onSelectInstrument }) {
+  return (
+    <div className="space-y-6">
+      {antam && (
+        <button
+          type="button"
+          onClick={() => onSelectInstrument(antam)}
+          className="w-full app-card rounded-[18px] p-4 sm:p-5 text-left border-l-4 border-amber-500 hover:shadow-md hover:-translate-y-0.5 transition-all"
+        >
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles size={18} className="text-amber-500" />
+                <h3 className="text-[18px] font-black app-heading">Emas Antam (IDR)</h3>
+                <span className="px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[10px] font-black">
+                  Fisik Indonesia
+                </span>
+              </div>
+              <p className="text-[13px] app-muted leading-relaxed">
+                Harga jual, per gram, dan buyback Antam dari sumber lokal. Klik untuk melihat tabel denominasi lengkap.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 min-w-0 lg:min-w-[560px]">
+              <LowRiskMiniBox label="Harga Jual" value={formatIDR(antam.priceIdr || antam.minimum)} />
+              <LowRiskMiniBox label="Buyback" value={antam.buybackIdr ? formatIDR(antam.buybackIdr) : '-'} />
+              <LowRiskMiniBox label="Spread" value={`${Number(antam.spreadPct || 0).toFixed(2)}%`} />
+              <LowRiskMiniBox label="Update" value={String(antam.sourceDate || '-').slice(0, 10)} />
+            </div>
+          </div>
+        </button>
+      )}
+
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <p className="text-[12px] app-muted">
+          {total} komoditas tersedia. Harga pasar dapat tertunda.
+        </p>
+        {refreshing && (
+          <span className="inline-flex items-center gap-2 text-[11px] font-bold text-[#05A845]">
+            <span className="w-2 h-2 rounded-full bg-[#05A845] animate-pulse" />
+            Memperbarui data...
+          </span>
+        )}
+      </div>
+
+      {groups.map((group) => (
+        <div key={group.category}>
+          <h3 className="text-[14px] font-black app-muted mb-3">
+            {group.label} <span className="text-[12px] font-bold text-gray-400">({group.items.length})</span>
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {group.items.map((instrument) => (
+              <LowRiskCard
+                key={instrument.code}
+                instrument={instrument}
+                returnPeriod="Semua"
+                onClick={() => onSelectInstrument(instrument)}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LowRiskCard({ instrument, returnPeriod = '1 Tahun', onClick }) {
+  const isCommodity = instrument.type === 'Komoditas';
+  const isPhysicalCommodity = isCommodity && instrument.isPhysicalCommodity;
+  const isSbn = instrument.type === 'SBN Ritel';
   const displayedReturn = returnPeriod === '1 Bulan'
     ? instrument.return1m
     : returnPeriod === '3 Tahun'
@@ -1793,12 +2235,27 @@ function LowRiskCard({ instrument, returnPeriod = '1 Tahun', onClick }) {
       : instrument.return1y;
   const returnTone = displayedReturn >= 0 ? 'text-[#05A845]' : 'text-red-500';
   const returnLabel = returnPeriod === 'Semua' ? 'Return 1 tahun' : `Return ${returnPeriod.toLowerCase()}`;
+  const goldPrice = Number(instrument.priceIdr || instrument.minimum || 0);
+  const goldBuyback = Number(instrument.buybackIdr || 0);
+  const goldSpread = Number(instrument.spreadPct || 0);
+  const commodityPrice = Number(instrument.commodityPrice || 0);
+  const commodityScore = Number(instrument.commodityScore || 0);
+  const commodityFundamental = Number(instrument.commodityFundamental || 0);
+  const commodityTechnical = Number(instrument.commodityTechnical || 0);
+  const commodityUpside = Number(instrument.commodityUpsidePct || 0);
+  const commodityCurrency = instrument.commodityCurrency || 'USD';
+  const commodityPriceLabel = commodityPrice ? formatCommodityPrice(commodityPrice, commodityCurrency) : '-';
+  const commoditySourcePrice = commodityPrice ? formatCommoditySourcePrice(commodityPrice, commodityCurrency) : '';
+  const sbnCoupon = formatSbnCoupon(instrument);
+  const sbnTenor = getSbnTenor(instrument);
+  const sbnMaturity = getSbnMaturity(instrument);
+  const sbnType = getSbnType(instrument);
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="app-card rounded-[18px] p-4 sm:p-5 text-left hover:shadow-md hover:-translate-y-0.5 transition-all min-w-0"
+      className="app-card rounded-[18px] p-4 sm:p-5 text-left hover:shadow-md hover:-translate-y-0.5 transition-all min-w-0 h-full flex flex-col"
     >
       <div className="flex items-start justify-between gap-4 mb-4">
         <div className="min-w-0">
@@ -1809,23 +2266,90 @@ function LowRiskCard({ instrument, returnPeriod = '1 Tahun', onClick }) {
           <p className="text-[12px] app-muted truncate">{instrument.provider}</p>
         </div>
         <div className="text-right shrink-0">
-          <p className={`text-[22px] font-black leading-none ${returnTone}`}>
-            {displayedReturn > 0 ? '+' : ''}{Number(displayedReturn || 0).toFixed(1)}%
-          </p>
-          <p className="text-[10px] app-muted mt-1">{returnLabel}</p>
+          {isCommodity ? (
+            <>
+              <p className={`text-[20px] font-black leading-none ${isPhysicalCommodity || commodityScore >= 6 ? 'text-[#05A845]' : commodityScore >= 4.5 ? 'text-amber-600 dark:text-amber-400' : 'text-red-500'}`}>
+                {isPhysicalCommodity
+                  ? formatIDR(goldPrice)
+                  : commodityScore
+                    ? `${formatDecimal(commodityScore, 1)}`
+                    : '-'}
+              </p>
+              <p className="text-[10px] app-muted mt-1">{isPhysicalCommodity ? 'Harga jual Antam' : 'Overall score'}</p>
+            </>
+          ) : isSbn ? (
+            <>
+              <p className="text-[22px] font-black leading-none text-[#05A845]">{sbnCoupon}</p>
+              <p className="text-[10px] app-muted mt-1">Kupon</p>
+            </>
+          ) : (
+            <>
+              <p className={`text-[22px] font-black leading-none ${returnTone}`}>
+                {displayedReturn > 0 ? '+' : ''}{Number(displayedReturn || 0).toFixed(1)}%
+              </p>
+              <p className="text-[10px] app-muted mt-1">{returnLabel}</p>
+            </>
+          )}
         </div>
       </div>
 
+      {isCommodity && !isPhysicalCommodity && (
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <span className="inline-flex px-2.5 py-1 rounded-full bg-[#EAF6ED] dark:bg-[#05A845]/10 text-[#05A845] text-[11px] font-black">
+            {commoditySentimentLabel(instrument.commoditySentiment || 'neutral')}
+          </span>
+          <span className={`text-[12px] font-black ${commodityUpside >= 0 ? 'text-[#05A845]' : 'text-red-500'}`}>
+            Upside {Number.isFinite(commodityUpside) ? formatSignedPercent(commodityUpside, 1) : '-'}
+          </span>
+        </div>
+      )}
+
       <p className="text-[13px] app-muted leading-relaxed line-clamp-2 mb-4">{instrument.description}</p>
 
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <LowRiskMiniBox label="Minimum" value={formatIDR(instrument.minimum)} />
-        <LowRiskMiniBox label="Risiko" value={instrument.risk} />
+      <div className="grid grid-cols-2 gap-3 mb-4 flex-1">
+        {isCommodity ? (
+          <>
+            {isPhysicalCommodity ? (
+              <>
+                <LowRiskMiniBox label="Buyback" value={goldBuyback ? formatIDR(goldBuyback) : '-'} />
+                <LowRiskMiniBox label="Spread" value={`${goldSpread.toFixed(2)}%`} />
+                <LowRiskMiniBox label="Denominasi" value={instrument.denominationGram ? `${instrument.denominationGram} gr` : 'Antam'} />
+                <LowRiskMiniBox label="Update" value={String(instrument.sourceDate || '-').slice(0, 10)} />
+              </>
+            ) : (
+              <>
+                <LowRiskMiniBox label="Harga estimasi" value={commodityPriceLabel} />
+                <LowRiskMiniBox label="Fundamental / Teknikal" value={`${commodityFundamental ? formatDecimal(commodityFundamental, 1) : '-'} / ${commodityTechnical ? formatDecimal(commodityTechnical, 1) : '-'}`} />
+                <div className="col-span-2 rounded-xl bg-gray-50 dark:bg-white/[0.04] px-3 py-2.5 min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-wider app-muted mb-1">Kategori dan simbol</p>
+                  <p className="text-[13px] font-black app-heading truncate">
+                    {[instrument.commodityCategoryLabel || 'Komoditas', instrument.commoditySymbol || instrument.code].filter(Boolean).join(' - ')}
+                  </p>
+                  {commoditySourcePrice && (
+                    <p className="text-[10px] app-muted mt-1 truncate">Dikonversi dari {commoditySourcePrice}</p>
+                  )}
+                </div>
+              </>
+            )}
+          </>
+        ) : isSbn ? (
+          <>
+            <LowRiskMiniBox label="Minimum" value={formatIDR(instrument.minimum)} />
+            <LowRiskMiniBox label="Tenor" value={Number.isFinite(Number(sbnTenor)) ? `${sbnTenor} tahun` : sbnTenor} />
+            <LowRiskMiniBox label="Jatuh Tempo" value={String(sbnMaturity).slice(0, 10)} />
+            <LowRiskMiniBox label="Tipe" value={sbnType} />
+          </>
+        ) : (
+          <>
+            <LowRiskMiniBox label="Minimum" value={formatIDR(instrument.minimum)} />
+            <LowRiskMiniBox label="Risiko" value={instrument.risk} />
+          </>
+        )}
       </div>
 
-      <div className="flex items-center justify-between text-[13px] font-black text-[#05A845]">
-        <span>Lihat detail</span>
-        <ArrowRight size={15} />
+      <div className="flex items-center justify-between">
+        <span className="text-[13px] font-bold text-[#05A845]">Lihat detail</span>
+        <ArrowRight size={16} className="text-[#05A845]" />
       </div>
     </button>
   );
@@ -1841,35 +2365,92 @@ function LowRiskMiniBox({ label, value }) {
 }
 
 function LowRiskDetail({ instrument, monthlyInvestment, onBack }) {
-  const [analysisState, setAnalysisState] = useState({ loading: false, data: null, error: null });
+  const initialDetailKey = instrument.commoditySlug || instrument.code;
+  const initialSymbol = instrument.commoditySymbol || initialDetailKey;
+  const initialAnalysis = instrument.type === 'Komoditas' ? getCachedCommodityDetail(initialDetailKey) : null;
+  const initialPrices = instrument.type === 'Komoditas' ? getCachedCommodityPrices(initialSymbol, '6M') : null;
+  const initialNews = instrument.type === 'Komoditas' ? getCachedCommodityNews(initialSymbol, 8) : null;
+  const [analysisState, setAnalysisState] = useState({
+    loading: instrument.type === 'Komoditas' && !initialAnalysis ? false : false,
+    refreshing: false,
+    data: initialAnalysis ? unwrapAnalysis(initialAnalysis) : null,
+    error: null,
+  });
+  const [priceState, setPriceState] = useState({
+    loading: false,
+    refreshing: false,
+    candles: initialPrices?.data?.candles || [],
+    error: null,
+  });
+  const [newsState, setNewsState] = useState({
+    loading: false,
+    refreshing: false,
+    items: initialNews?.data?.news || [],
+    error: null,
+  });
   const allocationAmount = Math.round((monthlyInvestment * instrument.allocationPercent) / 100);
-  const goldAnalysis = analysisState.data?.analysis || {};
-  const effectiveReturn = Number.isFinite(Number(goldAnalysis?.simulation?.estimated_return_pct_1y))
-    ? Number(goldAnalysis.simulation.estimated_return_pct_1y)
+  const commodityAnalysis = analysisState.data?.analysis || {};
+  const effectiveReturn = Number.isFinite(Number(commodityAnalysis?.simulation?.estimated_return_pct_1y))
+    ? Number(commodityAnalysis.simulation.estimated_return_pct_1y)
     : instrument.return1y;
-  const estimatedReturn = Math.round((allocationAmount * effectiveReturn) / 100);
+  const normalizedEffectiveReturn = Number.isFinite(Number(effectiveReturn)) ? Number(effectiveReturn) : 0;
+  const estimatedReturn = Math.round((allocationAmount * normalizedEffectiveReturn) / 100);
   const estimatedEnd = allocationAmount + estimatedReturn;
-  const isGold = instrument.type === 'Emas';
-  const buyPrice = Number(goldAnalysis.buy_price || instrument.priceIdr || instrument.minimum || 0);
-  const sellPrice = Number(goldAnalysis.sell_price || instrument.buybackIdr || 0);
-  const spreadPct = Number.isFinite(Number(goldAnalysis.spread_pct))
-    ? Number(goldAnalysis.spread_pct)
+  const isCommodity = instrument.type === 'Komoditas';
+  const isPhysicalCommodity = isCommodity && instrument.isPhysicalCommodity;
+  const isSbn = instrument.type === 'SBN Ritel';
+  const buyPrice = Number(commodityAnalysis.buy_price || instrument.priceIdr || instrument.minimum || 0);
+  const sellPrice = Number(commodityAnalysis.sell_price || instrument.buybackIdr || 0);
+  const spreadPct = Number.isFinite(Number(commodityAnalysis.spread_pct))
+    ? Number(commodityAnalysis.spread_pct)
     : instrument.spreadPct;
-  const estimatedGram = Number(goldAnalysis.estimated_gram || (buyPrice > 0 ? allocationAmount / buyPrice : 0));
+  const estimatedGram = Number(commodityAnalysis.estimated_gram || (buyPrice > 0 ? allocationAmount / buyPrice : 0));
+  const currentCommodityPrice = Number(commodityAnalysis.current_price || commodityAnalysis.trading_setup?.current_price || instrument.commodityPrice || 0);
+  const commodityScore = Number(commodityAnalysis.overall_score || instrument.commodityScore || 0);
+  const commoditySentiment = commodityAnalysis.sentiment_label || instrument.commoditySentiment || 'Netral';
+  const sbnCoupon = formatSbnCoupon(instrument);
+  const sbnTenor = getSbnTenor(instrument);
+  const sbnMaturity = getSbnMaturity(instrument);
+  const sbnType = getSbnType(instrument);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [instrument.code]);
 
   useEffect(() => {
     let ignore = false;
-    if (!isGold) {
+    if (!isCommodity) {
       setAnalysisState({ loading: false, data: null, error: null });
       return undefined;
     }
 
-    setAnalysisState({ loading: true, data: null, error: null });
-    getInvestmentProductAnalysis(instrument.apiType || 'gold', instrument.code)
+    const cached = getCachedCommodityDetail(instrument.commoditySlug || instrument.code);
+    if (cached) {
+      setAnalysisState({
+        loading: false,
+        refreshing: true,
+        data: unwrapAnalysis(cached),
+        error: null,
+      });
+    } else {
+      setAnalysisState((prev) => ({
+        loading: !prev.data,
+        refreshing: false,
+        data: prev.data,
+        error: null,
+      }));
+    }
+
+    const detailRequest = isCommodity
+      ? getCommodityDetail(instrument.commoditySlug || instrument.code)
+      : getInvestmentProductAnalysis(instrument.apiType || 'commodity', instrument.code);
+
+    detailRequest
       .then((response) => {
         if (!ignore) {
           setAnalysisState({
             loading: false,
+            refreshing: false,
             data: unwrapAnalysis(response),
             error: null,
           });
@@ -1879,8 +2460,9 @@ function LowRiskDetail({ instrument, monthlyInvestment, onBack }) {
         if (!ignore) {
           setAnalysisState({
             loading: false,
-            data: null,
-            error: error?.response?.data?.message || error.message || 'Analisis logam mulia belum tersedia.',
+            refreshing: false,
+            data: cached ? unwrapAnalysis(cached) : null,
+            error: error?.response?.data?.message || error.message || 'Analisis komoditas belum tersedia.',
           });
         }
       });
@@ -1888,7 +2470,111 @@ function LowRiskDetail({ instrument, monthlyInvestment, onBack }) {
     return () => {
       ignore = true;
     };
-  }, [instrument.apiType, instrument.code, isGold]);
+  }, [instrument.apiType, instrument.code, instrument.commoditySlug, isCommodity]);
+
+  useEffect(() => {
+    let ignore = false;
+    if (!isCommodity || isPhysicalCommodity) {
+      setPriceState({ loading: false, candles: [], error: null });
+      return undefined;
+    }
+
+    const symbol = instrument.commoditySymbol || instrument.commoditySlug || instrument.code;
+    const cached = getCachedCommodityPrices(symbol, '6M');
+    if (cached?.data?.candles?.length) {
+      setPriceState({
+        loading: false,
+        refreshing: true,
+        candles: cached.data.candles,
+        error: null,
+      });
+    } else {
+      setPriceState((prev) => ({
+        loading: !prev.candles.length,
+        refreshing: false,
+        candles: prev.candles,
+        error: null,
+      }));
+    }
+
+    getCommodityPrices(symbol, '6M')
+      .then((response) => {
+        if (!ignore) {
+          setPriceState({
+            loading: false,
+            refreshing: false,
+            candles: response?.data?.candles || [],
+            error: null,
+          });
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setPriceState({
+            loading: false,
+            refreshing: false,
+            candles: cached?.data?.candles || [],
+            error: error?.response?.data?.message || error.message || 'Data harga historis belum tersedia.',
+          });
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [instrument.code, instrument.commoditySlug, instrument.commoditySymbol, isCommodity, isPhysicalCommodity]);
+
+  useEffect(() => {
+    let ignore = false;
+    if (!isCommodity || isPhysicalCommodity) {
+      setNewsState({ loading: false, items: [], error: null });
+      return undefined;
+    }
+
+    const symbol = instrument.commoditySymbol || instrument.commoditySlug || instrument.code;
+    const cached = getCachedCommodityNews(symbol, 8);
+    if (cached?.data?.news?.length) {
+      setNewsState({
+        loading: false,
+        refreshing: true,
+        items: cached.data.news,
+        error: null,
+      });
+    } else {
+      setNewsState((prev) => ({
+        loading: !prev.items.length,
+        refreshing: false,
+        items: prev.items,
+        error: null,
+      }));
+    }
+
+    getCommodityNews(symbol, 8)
+      .then((response) => {
+        if (!ignore) {
+          setNewsState({
+            loading: false,
+            refreshing: false,
+            items: response?.data?.news || [],
+            error: null,
+          });
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setNewsState({
+            loading: false,
+            refreshing: false,
+            items: cached?.data?.news || [],
+            error: error?.response?.data?.message || error.message || 'Berita komoditas belum tersedia.',
+          });
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [instrument.code, instrument.commoditySlug, instrument.commoditySymbol, isCommodity, isPhysicalCommodity]);
 
   return (
     <section className="pt-2 animate-in fade-in slide-in-from-right-4 duration-500">
@@ -1903,22 +2589,57 @@ function LowRiskDetail({ instrument, monthlyInvestment, onBack }) {
       <div className="app-card rounded-[24px] overflow-hidden mb-5">
         <div className="p-5 sm:p-6 lg:p-8 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6 border-b app-divider">
           <div className="min-w-0">
-            <p className="text-[12px] font-black uppercase tracking-wider text-[#05A845] mb-2">{instrument.kind}</p>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <p className="text-[12px] font-black uppercase tracking-wider text-[#05A845]">{instrument.kind}</p>
+              {isCommodity && (
+                <>
+                  <span className="px-2 py-1 rounded-lg bg-[#EAF6ED] dark:bg-[#05A845]/10 text-[#05A845] text-[10px] font-black">
+                    {commoditySentimentLabel(commoditySentiment)}
+                  </span>
+                  <span className="px-2 py-1 rounded-lg bg-gray-50 dark:bg-white/[0.04] app-muted text-[10px] font-black uppercase">
+                    {isPhysicalCommodity ? 'Fisik' : 'Pasar berjangka'}
+                  </span>
+                  {!isPhysicalCommodity && (
+                    <span className="px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[10px] font-black">
+                      Harga dapat tertunda
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
             <h2 className="text-[24px] sm:text-[28px] font-black page-title mb-2 break-words">{instrument.name}</h2>
-            <p className="text-[13px] app-muted">{instrument.provider}</p>
+            <p className="text-[13px] app-muted">
+              {isCommodity
+                ? [instrument.commoditySymbol, instrument.commodityNameId, instrument.commodityCategoryLabel].filter(Boolean).join(' - ')
+                : instrument.provider}
+            </p>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:gap-3">
-            {isGold ? (
+            {isCommodity ? (
               <>
-                <LowRiskTopStat label="Harga Jual" value={formatIDR(buyPrice)} />
-                <LowRiskTopStat label="Buyback" value={sellPrice ? formatIDR(sellPrice) : '-'} />
-                <LowRiskTopStat label="Spread" value={`${Number(spreadPct || 0).toFixed(1)}%`} tone={spreadPct <= 5 ? 'green' : undefined} />
+                {isPhysicalCommodity ? (
+                  <>
+                    <LowRiskTopStat label="Harga Jual" value={formatIDR(buyPrice)} />
+                    <LowRiskTopStat label="Buyback" value={sellPrice ? formatIDR(sellPrice) : '-'} />
+                    <LowRiskTopStat label="Spread" value={`${Number(spreadPct || 0).toFixed(1)}%`} tone={spreadPct <= 5 ? 'green' : undefined} />
+                  </>
+                ) : (
+                  <>
+                    <LowRiskTopStat label="Overall Score" value={commodityScore ? `${formatDecimal(commodityScore, 1)}/10` : '-'} tone={commodityScore >= 6 ? 'green' : undefined} />
+                    <LowRiskTopStat label="Harga" value={currentCommodityPrice ? formatCommodityPrice(currentCommodityPrice, instrument.commodityCurrency || 'USD') : '-'} />
+                    <LowRiskTopStat label="Sentimen" value={commoditySentimentLabel(commoditySentiment)} />
+                  </>
+                )}
               </>
             ) : (
               <>
-                <LowRiskTopStat label="Return 1 Tahun" value={`${instrument.return1y > 0 ? '+' : ''}${instrument.return1y.toFixed(1)}%`} tone={instrument.return1y >= 0 ? 'green' : 'red'} />
+                <LowRiskTopStat
+                  label={isSbn ? 'Kupon' : 'Return 1 Tahun'}
+                  value={isSbn ? sbnCoupon : `${instrument.return1y > 0 ? '+' : ''}${instrument.return1y.toFixed(1)}%`}
+                  tone={isSbn || instrument.return1y >= 0 ? 'green' : 'red'}
+                />
                 <LowRiskTopStat label="Minimum" value={formatIDR(instrument.minimum)} />
-                <LowRiskTopStat label="Alokasi" value={`${instrument.allocationPercent}%`} />
+                <LowRiskTopStat label={isSbn ? 'Tenor' : 'Alokasi'} value={isSbn ? (Number.isFinite(Number(sbnTenor)) ? `${sbnTenor} tahun` : sbnTenor) : `${instrument.allocationPercent}%`} />
               </>
             )}
           </div>
@@ -1931,35 +2652,46 @@ function LowRiskDetail({ instrument, monthlyInvestment, onBack }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-5">
-        <div className="app-card rounded-[18px] p-4 sm:p-5">
-          <h3 className="text-[16px] font-bold app-heading mb-4">Ringkasan Instrumen</h3>
-          {isGold ? (
-            <div className="grid grid-cols-2 gap-3">
-              <LowRiskMiniBox label="Denominasi" value={instrument.denominationGram ? `${instrument.denominationGram} gr` : 'Antam'} />
-              <LowRiskMiniBox label="Estimasi Gram" value={`${estimatedGram.toFixed(4)} gr`} />
-              <LowRiskMiniBox label="Harga Jual" value={formatIDR(buyPrice)} />
-              <LowRiskMiniBox label="Buyback" value={sellPrice ? formatIDR(sellPrice) : '-'} />
-              <LowRiskMiniBox label="Spread" value={`${Number(spreadPct || 0).toFixed(2)}%`} />
-              <LowRiskMiniBox label="Sumber" value={goldAnalysis?.antam_denomination?.source || instrument.provider || 'Antam'} />
-              <LowRiskMiniBox label="Update" value={String(goldAnalysis?.fetched_at || instrument.sourceDate || '-').slice(0, 10)} />
-              <LowRiskMiniBox label="Status" value={analysisState.loading ? 'Memuat' : analysisState.error ? 'Data harga' : 'Analisis tersedia'} />
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <LowRiskMiniBox label="Jenis" value={instrument.sharia ? 'Syariah' : 'Konvensional'} />
-              <LowRiskMiniBox label="NAB/Unit" value={formatIDR(instrument.nav)} />
-              <LowRiskMiniBox label="Return 1 Bulan" value={`${instrument.return1m > 0 ? '+' : ''}${instrument.return1m.toFixed(1)}%`} />
-              <LowRiskMiniBox label="Return 3 Tahun" value={`${instrument.return3y > 0 ? '+' : ''}${instrument.return3y.toFixed(1)}%`} />
-              <LowRiskMiniBox label="Syariah" value={instrument.sharia ? 'Ya' : 'Tidak'} />
-              <LowRiskMiniBox label="Rank Jenis" value={`#${instrument.rank}`} />
-              <LowRiskMiniBox label="Risiko" value={instrument.risk} />
-              <LowRiskMiniBox label="Skor Finly" value={instrument.pipelineScore.toFixed(2)} />
-            </div>
-          )}
+      {isCommodity ? (
+        <div className="mb-5">
+          <CommodityAnalysisPanels
+            analysis={commodityAnalysis}
+            instrument={instrument}
+            isPhysical={isPhysicalCommodity}
+            priceState={priceState}
+            newsItemsOverride={newsState.items}
+            analysisStatus={analysisState}
+          />
         </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-5">
+            <div className="app-card rounded-[18px] p-4 sm:p-5">
+              <h3 className="text-[16px] font-bold app-heading mb-4">Ringkasan Instrumen</h3>
+              {isSbn ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <LowRiskMiniBox label="Kupon" value={sbnCoupon} />
+                  <LowRiskMiniBox label="Tipe Kupon" value={sbnType} />
+                  <LowRiskMiniBox label="Tenor" value={Number.isFinite(Number(sbnTenor)) ? `${sbnTenor} tahun` : sbnTenor} />
+                  <LowRiskMiniBox label="Jatuh Tempo" value={String(sbnMaturity).slice(0, 10)} />
+                  <LowRiskMiniBox label="Minimum" value={formatIDR(instrument.minimum)} />
+                  <LowRiskMiniBox label="Risiko" value={instrument.risk || 'Rendah'} />
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <LowRiskMiniBox label="Jenis" value={instrument.sharia ? 'Syariah' : 'Konvensional'} />
+                  <LowRiskMiniBox label="NAB/Unit" value={formatIDR(instrument.nav)} />
+                  <LowRiskMiniBox label="Return 1 Bulan" value={`${instrument.return1m > 0 ? '+' : ''}${instrument.return1m.toFixed(1)}%`} />
+                  <LowRiskMiniBox label="Return 3 Tahun" value={`${instrument.return3y > 0 ? '+' : ''}${instrument.return3y.toFixed(1)}%`} />
+                  <LowRiskMiniBox label="Syariah" value={instrument.sharia ? 'Ya' : 'Tidak'} />
+                  <LowRiskMiniBox label="Rank Jenis" value={`#${instrument.rank}`} />
+                  <LowRiskMiniBox label="Risiko" value={instrument.risk} />
+                  <LowRiskMiniBox label="Skor Kecocokan" value={instrument.pipelineScore.toFixed(2)} />
+                </div>
+              )}
+            </div>
 
-        <div className="app-card rounded-[18px] p-4 sm:p-5">
+            <div className="app-card rounded-[18px] p-4 sm:p-5">
           <h3 className="text-[16px] font-bold app-heading mb-4">Peran Dalam Portofolio</h3>
           <div className="flex justify-between gap-3 text-[13px] font-bold mb-2">
             <span className="app-heading">Porsi contoh dari dana bulanan</span>
@@ -1969,69 +2701,44 @@ function LowRiskDetail({ instrument, monthlyInvestment, onBack }) {
             <div className="h-full rounded-full bg-[#05A845]" style={{ width: `${instrument.allocationPercent}%` }} />
           </div>
           <p className="text-[12px] app-muted mb-5">
-            {isGold
-              ? 'Logam mulia berperan sebagai lindung nilai. Harga dapat tertunda dari sumber pasar, bukan harga tick-by-tick.'
-              : 'Pelengkap low risk sesuai kebutuhan likuiditas dan horizon.'}
+            Pelengkap low risk sesuai kebutuhan likuiditas dan horizon.
           </p>
 
-          <h4 className="text-[14px] font-black app-heading mb-3">Simulasi Return 1 Tahun</h4>
+          <h4 className="text-[14px] font-black app-heading mb-3">{isSbn ? 'Estimasi Kupon 1 Tahun' : 'Simulasi Return 1 Tahun'}</h4>
           <div className="space-y-3">
             <LowRiskMiniBox label="Setoran 12 Bulan" value={formatIDR(allocationAmount * 12)} />
             <LowRiskMiniBox label="Estimasi Imbal Hasil" value={formatIDR(estimatedReturn)} />
             <LowRiskMiniBox label="Estimasi Akhir Tahun" value={formatIDR(estimatedEnd)} />
           </div>
           <p className="text-[11px] app-muted mt-3">
-            {isGold
-              ? 'Simulasi memakai harga jual/buyback dan nominal investasi user. Spread dapat memengaruhi hasil jika dijual terlalu cepat.'
-              : 'Simulasi memakai estimasi return tahunan dan dana investasi bulanan user. Hasil tidak dijamin.'}
+            {isSbn
+              ? 'Estimasi memakai kupon tahunan dan dana investasi bulanan user. Hasil aktual mengikuti ketentuan produk.'
+              : 'Estimasi memakai return tahunan dan dana investasi bulanan user. Hasil tidak dijamin.'}
           </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <LowRiskNoteCard
-          title="Cocok Untuk"
-          tone="green"
-          items={isGold ? (
-            goldAnalysis.green_flags?.length ? goldAnalysis.green_flags : [
-              'Lindung nilai jangka panjang',
-              'Penyeimbang saat aset bertumbuh berfluktuasi',
-              'Investor yang ingin instrumen mudah dipahami',
-            ]
-          ) : [
-            'Diversifikasi tanpa memilih aset satu per satu',
-            'Investasi berkala nominal kecil',
-            'Investor yang ingin pengelolaan profesional',
-          ]}
-        />
-        <LowRiskNoteCard
-          title="Yang Perlu Diperhatikan"
-          tone="amber"
-          items={isGold ? (
-            goldAnalysis.red_flags?.length ? goldAnalysis.red_flags : [
-              'Ada selisih harga jual dan buyback',
-              'Tidak menghasilkan kupon atau dividen',
-              'Harga tetap bisa turun dalam jangka pendek',
-            ]
-          ) : [
-            'Baca fund fact sheet sebelum membeli',
-            'Return historis tidak menjamin hasil ke depan',
-            'Perhatikan risiko underlying asset',
-          ]}
-        />
-      </div>
-
-      {isGold && (
-        <div className="mt-5 app-card rounded-[18px] p-4 sm:p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Info size={16} className="text-[#05A845]" />
-            <h3 className="text-[16px] font-bold app-heading">Sumber Data</h3>
+            </div>
           </div>
-          <p className="text-[13px] app-muted leading-relaxed">
-            {goldAnalysis?.attribution?.physical || 'Emas fisik: Antam (via harga-emas.org)'}. {goldAnalysis?.attribution?.data || 'Data pasar komoditas: Yahoo Finance'}.
-            Analisis ini bersifat edukatif dan bukan rekomendasi beli/jual.
-          </p>
-        </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <LowRiskNoteCard
+              title="Cocok Untuk"
+              tone="green"
+              items={[
+                ...(isSbn
+                  ? ['Investor yang mencari kupon berkala', 'Tujuan konservatif dengan tenor jelas', 'Penyeimbang aset bertumbuh']
+                  : ['Diversifikasi tanpa memilih aset satu per satu', 'Investasi berkala nominal kecil', 'Investor yang ingin pengelolaan profesional']),
+              ]}
+            />
+            <LowRiskNoteCard
+              title="Yang Perlu Diperhatikan"
+              tone="amber"
+              items={[
+                ...(isSbn
+                  ? ['Perhatikan jadwal penawaran dan jatuh tempo', 'Harga pasar sekunder dapat berubah', 'Pahami pajak dan ketentuan kupon']
+                  : ['Baca fund fact sheet sebelum membeli', 'Return historis tidak menjamin hasil ke depan', 'Perhatikan risiko underlying asset']),
+              ]}
+            />
+          </div>
+        </>
       )}
     </section>
   );
@@ -2062,6 +2769,566 @@ function LowRiskNoteCard({ title, items, tone }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+const commoditySentimentLabel = (value) => {
+  const raw = String(value || '').toLowerCase();
+  const labels = {
+    strongly_bullish: 'Sangat Bullish',
+    moderately_bullish: 'Bullish',
+    neutral: 'Netral',
+    moderately_bearish: 'Bearish',
+    strongly_bearish: 'Sangat Bearish',
+    insufficient_data: 'Data Terbatas',
+  };
+  return labels[raw] || normalizeSentiment(raw);
+};
+
+const monthShortLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+
+function CommodityAnalysisPanels({ analysis, instrument, isPhysical, priceState, newsItemsOverride = [], analysisStatus = null }) {
+  const trading = analysis?.trading_setup || {};
+  const contract = analysis?.contract_info || {};
+  const currency = analysis?.currency || contract.currency || instrument.commodityCurrency || 'USD';
+  const cot = analysis?.cot_panel;
+  const seasonality = analysis?.seasonality || {};
+  const performance = analysis?.performance || {};
+  const crossRatios = Array.isArray(analysis?.cross_ratios) ? analysis.cross_ratios : [];
+  const macro = analysis?.macro_context || {};
+  const fundamentalScores = analysis?.fundamental_sub_scores || {};
+  const technicalScores = analysis?.technical_sub_scores || {};
+  const reasoning = analysis?.sub_area_reasoning || {};
+  const newsItems = newsItemsOverride.length
+    ? toNewsItems(newsItemsOverride)
+    : toNewsItems(analysis?.news_articles || analysis?.news_items || []);
+  const antamDenominations = Array.isArray(analysis?.antam_denominations) && analysis.antam_denominations.length
+    ? analysis.antam_denominations
+    : Array.isArray(instrument?.antamDenominations)
+      ? instrument.antamDenominations
+      : [];
+  const isAnalyzing = analysisStatus?.loading || analysisStatus?.data?.payload?.status === 'analyzing';
+
+  if (isAnalyzing && !Object.keys(analysis || {}).length) {
+    return (
+      <div className="app-card rounded-[18px] p-8 text-center mb-5">
+        <div className="w-10 h-10 rounded-full border-4 border-[#05A845]/20 border-t-[#05A845] animate-spin mx-auto mb-3" />
+        <p className="font-black app-heading mb-1">Menganalisis komoditas...</p>
+        <p className="text-[13px] app-muted">Estimasi sekitar 25 detik. Data akan tampil setelah analisis selesai.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 mb-5">
+      {!isPhysical && (
+        <>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <CommodityPanel title="Overall Score">
+              <CommodityScoreSummary
+                overall={analysis?.overall_score}
+                fundamental={analysis?.fundamental_score}
+                technical={analysis?.technical_score}
+              />
+            </CommodityPanel>
+            <CommodityPanel title="Positioning COT">
+              <CommodityCotPanel cot={cot} />
+            </CommodityPanel>
+            <CommodityPanel title="Trading Setup">
+              <div className="grid grid-cols-2 gap-3">
+                <LowRiskMiniBox label="Entry" value={trading.entry_low || trading.entry_high ? `${formatCommodityPrice(trading.entry_low, currency)} - ${formatCommodityPrice(trading.entry_high, currency)}` : '-'} />
+                <LowRiskMiniBox label="Target" value={formatCommodityPrice(trading.target_price, currency)} />
+                <LowRiskMiniBox label="Stop Loss" value={formatCommodityPrice(trading.stop_loss, currency)} />
+                <LowRiskMiniBox label="Risk/Reward" value={trading.risk_reward_ratio || '-'} />
+                <LowRiskMiniBox label="Upside" value={formatSignedPercent(trading.upside_pct || analysis?.upside_pct || 0, 1)} />
+                <LowRiskMiniBox label="Harga" value={formatCommodityPrice(trading.current_price || analysis?.current_price, currency)} />
+              </div>
+              {commodityFxNote(currency) && (
+                <p className="text-[11px] app-muted mt-3">{commodityFxNote(currency)}</p>
+              )}
+            </CommodityPanel>
+          </div>
+
+          <CommodityPanel title="Contract Info">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <LowRiskMiniBox label="Exchange" value={contract.exchange || instrument.commodityExchange || '-'} />
+              <LowRiskMiniBox label="Mata Uang Asal" value={currency} />
+              <LowRiskMiniBox label="Unit" value={contract.unit || instrument.commodityUnit || '-'} />
+              <LowRiskMiniBox label="Contract Size" value={contract.contract_size || instrument.commodityContractSize || '-'} />
+              <LowRiskMiniBox label="Korelasi USD" value={contract.usd_correlation_90d == null ? '-' : formatDecimal(contract.usd_correlation_90d, 2)} />
+              <LowRiskMiniBox label="52w Range" value={contract.low_52w && contract.high_52w ? `${formatCommodityPrice(contract.low_52w, currency)} - ${formatCommodityPrice(contract.high_52w, currency)}` : '-'} />
+            </div>
+          </CommodityPanel>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <CommodityPanel title="Performa">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {['1M', '3M', '6M', 'YTD'].map((key) => (
+                  <LowRiskMiniBox
+                    key={key}
+                    label={key}
+                    value={performance[key] == null ? '-' : formatSignedPercent(performance[key], 1)}
+                  />
+                ))}
+              </div>
+            </CommodityPanel>
+            <CommodityPanel title="Rasio Pasar">
+              {crossRatios.length ? (
+                <div className="space-y-3">
+                  {crossRatios.slice(0, 3).map((ratio) => (
+                    <div key={ratio.name} className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 dark:bg-white/[0.04] px-3 py-2.5">
+                      <div>
+                        <p className="text-[13px] font-black app-heading">{ratio.name}</p>
+                        <p className="text-[11px] app-muted">{ratio.interpretation || 'Rasio lintas komoditas'}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[15px] font-black app-heading">{formatDecimal(ratio.value, 2)}</p>
+                        <p className="text-[11px] app-muted">Pctl {formatDecimal(ratio.percentile_1y || 0, 0)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[13px] app-muted">Rasio lintas komoditas belum tersedia.</p>
+              )}
+            </CommodityPanel>
+          </div>
+
+          <CommodityPanel title="Konteks Makro">
+            <CommodityMacroGrid macro={macro} />
+          </CommodityPanel>
+
+          <CommodityPanel title="Seasonality">
+            <CommoditySeasonality seasonality={seasonality} />
+          </CommodityPanel>
+        </>
+      )}
+
+      {!isPhysical && (
+        <CommodityPanel title="Grafik Harga Harian">
+          <CommodityPriceChart
+            candles={priceState?.candles || []}
+            loading={priceState?.loading}
+            error={priceState?.error}
+            currency={currency}
+          />
+          <p className="text-[11px] app-muted mt-3 text-right">Data harga pasar dari penyedia data publik dan dapat tertunda.</p>
+        </CommodityPanel>
+      )}
+
+      {isPhysical && antamDenominations.length > 0 && (
+        <CommodityPanel title="Harga Emas Antam">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[13px]">
+              <thead className="text-[11px] uppercase tracking-wider app-muted">
+                <tr>
+                  <th className="py-2 pr-3">Gram</th>
+                  <th className="py-2 pr-3">Harga Jual</th>
+                  <th className="py-2 pr-3">Per Gram</th>
+                  <th className="py-2">Buyback</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y app-divider">
+                {antamDenominations.map((item) => {
+                  const gram = Number(item.denomination_gram ?? item.gram ?? item.weight_gram ?? 0);
+                  return (
+                  <tr key={`${gram}-${item.price_idr}`}>
+                    <td className="py-2 pr-3 font-bold app-heading">{Number.isFinite(gram) && gram > 0 ? `${gram} gr` : '-'}</td>
+                    <td className="py-2 pr-3 font-bold app-heading">{formatIDR(item.price_idr)}</td>
+                    <td className="py-2 pr-3 app-muted">{formatIDR(item.price_per_gram_idr)}</td>
+                    <td className="py-2 text-[#05A845] font-bold">{formatIDR(item.buyback_idr)}</td>
+                  </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CommodityPanel>
+      )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <CommodityScoreBreakdown
+          title="Analisis Fundamental"
+          scores={fundamentalScores}
+          reasoning={reasoning}
+          labels={{
+            supply_demand: 'Supply & Demand',
+            macro_usd: 'Makro & USD',
+            positioning: 'Positioning',
+            seasonality: 'Seasonality',
+            risk: 'Risk',
+          }}
+        />
+        <CommodityScoreBreakdown
+          title="Analisis Teknikal"
+          scores={technicalScores}
+          reasoning={reasoning}
+          labels={{
+            trend_analysis: 'Trend Analysis',
+            support_resistance: 'Support & Resistance',
+            volume_analysis: 'Volume',
+            momentum: 'Momentum',
+            entry_strategy: 'Entry Strategy',
+          }}
+        />
+      </div>
+
+      <CommodityPanel title={`Berita${analysis?.news_sentiment ? ` - ${commoditySentimentLabel(analysis.news_sentiment)}` : ''}`}>
+        {analysis?.news_summary && (
+          <p className="text-[13px] app-heading leading-relaxed mb-3">{analysis.news_summary}</p>
+        )}
+        {newsItems.length ? (
+          <div className="space-y-3">
+            {newsItems.slice(0, 5).map((item) => (
+              <a
+                key={`${item.title}-${item.url || item.publishedAt}`}
+                href={item.url || '#'}
+                target={item.url ? '_blank' : undefined}
+                rel={item.url ? 'noreferrer' : undefined}
+                className="block rounded-xl border border-gray-100 dark:border-[#2e303a] bg-gray-50 dark:bg-white/[0.04] px-3 py-3 hover:border-[#05A845]/40 transition-colors"
+              >
+                <p className="text-[13px] font-bold app-heading leading-snug">{item.title}</p>
+                <p className="text-[11px] app-muted mt-1">
+                  {[item.source, item.sentiment ? commoditySentimentLabel(item.sentiment) : null, String(item.publishedAt || '').slice(0, 10)].filter(Boolean).join(' - ')}
+                </p>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[13px] app-muted">Berita komoditas belum tersedia.</p>
+        )}
+      </CommodityPanel>
+    </div>
+  );
+}
+
+function CommodityPanel({ title, children }) {
+  return (
+    <div className="app-card rounded-[18px] p-4 sm:p-5 min-w-0">
+      <h3 className="text-[16px] font-bold app-heading mb-4">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function CommodityScoreSummary({ overall, fundamental, technical }) {
+  const score = Number(overall);
+  const displayScore = Number.isFinite(score) && score > 0 ? formatDecimal(score, 1) : '-';
+
+  const scoreClass = Number.isFinite(score) && score >= 6.5
+    ? 'text-[#05A845]'
+    : Number.isFinite(score) && score >= 4.5
+      ? 'text-amber-600 dark:text-amber-400'
+      : Number.isFinite(score) && score > 0
+        ? 'text-red-500'
+        : 'app-heading';
+
+  const barItems = [
+    { label: 'Fundamental', value: Number(fundamental) },
+    { label: 'Teknikal', value: Number(technical) },
+  ];
+
+  return (
+    <div>
+      <div className="flex items-end gap-1 mb-4">
+        <span className={`text-[42px] leading-none font-black ${scoreClass}`}>{displayScore}</span>
+        <span className="text-[18px] app-muted font-black mb-1">/10</span>
+      </div>
+      <div className="space-y-3">
+        {barItems.map((item) => {
+          const value = Number.isFinite(item.value) ? item.value : 0;
+          const width = Math.max(0, Math.min(100, value * 10));
+          const toneClass = value >= 6.5 ? 'bg-[#05A845]' : value >= 4.5 ? 'bg-amber-400' : value > 0 ? 'bg-red-500' : 'bg-gray-300';
+          return (
+            <div key={item.label}>
+              <div className="flex items-center justify-between gap-3 text-[13px] font-bold mb-1">
+                <span className="app-heading">{item.label}</span>
+                <span className="app-muted">{value > 0 ? formatDecimal(value, 1) : '-'}</span>
+              </div>
+              <div className="h-2 rounded-full bg-gray-100 dark:bg-white/[0.05] overflow-hidden">
+                <div className={`h-full rounded-full ${toneClass}`} style={{ width: `${width}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const DEFAULT_COMMODITY_USD_IDR_RATE = 16000;
+
+const getCommodityUsdIdrRate = () => {
+  const envRate = Number(import.meta?.env?.VITE_COMMODITY_USD_IDR_RATE);
+  return Number.isFinite(envRate) && envRate > 0 ? envRate : DEFAULT_COMMODITY_USD_IDR_RATE;
+};
+
+function convertCommodityPriceToIdr(value, currency = 'USD') {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const normalizedCurrency = String(currency || 'USD').toUpperCase();
+  if (normalizedCurrency === 'IDR') return numeric;
+  if (normalizedCurrency === 'USD') return numeric * getCommodityUsdIdrRate();
+  return numeric;
+}
+
+function formatCommodityPrice(value, currency = 'USD') {
+  const idrValue = convertCommodityPriceToIdr(value, currency);
+  if (!Number.isFinite(idrValue) || idrValue === 0) return '-';
+  return formatIDR(idrValue);
+}
+
+function formatCommoditySourcePrice(value, currency = 'USD') {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) return '';
+  const normalizedCurrency = String(currency || 'USD').toUpperCase();
+  if (normalizedCurrency === 'IDR') return '';
+  const digits = Math.abs(numeric) < 10 ? 4 : 2;
+  return `${normalizedCurrency} ${numeric.toLocaleString('id-ID', { maximumFractionDigits: digits })}`;
+}
+
+function commodityFxNote(currency = 'USD') {
+  const normalizedCurrency = String(currency || 'USD').toUpperCase();
+  if (normalizedCurrency !== 'USD') return '';
+  return `Nilai rupiah memakai estimasi kurs ${formatIDR(getCommodityUsdIdrRate())} per USD.`;
+}
+
+function CommodityCotPanel({ cot }) {
+  if (!cot) {
+    return <p className="text-[13px] app-muted leading-relaxed">Data COT tidak tersedia untuk komoditas ini.</p>;
+  }
+
+  const zScore = Number(cot.net_spec_zscore || 0);
+  const gaugePosition = Math.max(0, Math.min(100, ((zScore + 3) / 6) * 100));
+  const bias = cot.bias || (Number(cot.noncomm_net) > 0 ? 'net_long' : Number(cot.noncomm_net) < 0 ? 'net_short' : 'neutral');
+  const biasLabel = bias === 'net_long' ? 'Net Long' : bias === 'net_short' ? 'Net Short' : 'Netral';
+  const biasClass = bias === 'net_long' ? 'text-[#05A845]' : bias === 'net_short' ? 'text-red-500' : 'app-heading';
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <p className={`text-[24px] font-black ${biasClass}`}>{biasLabel}</p>
+        {cot.is_stale && <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-[10px] font-black">Stale</span>}
+        {cot.is_proxy && <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-700 text-[10px] font-black">Proxy</span>}
+      </div>
+      <p className="text-[12px] app-muted mb-2">
+        Net spec {formatCompactNumber(cot.noncomm_net || 0)} kontrak - {formatDecimal(cot.net_spec_pct_oi || 0, 1)}% OI
+      </p>
+      <p className="text-[12px] app-muted mb-3">Z-score 52 minggu: <strong className="app-heading">{formatDecimal(zScore, 2)}</strong></p>
+      <div className="relative h-2 rounded-full bg-gradient-to-r from-red-500 via-gray-400 to-[#05A845]">
+        <div className="absolute -top-1 h-4 w-1 rounded-full bg-[#1A1A1A] dark:bg-white" style={{ left: `calc(${gaugePosition}% - 2px)` }} />
+      </div>
+      <div className="flex justify-between text-[10px] app-muted mt-1">
+        <span>Short</span>
+        <span>Netral</span>
+        <span>Long</span>
+      </div>
+      <p className="text-[11px] app-muted mt-3">Data posisi pelaku pasar: {cot.source || 'CFTC'} - {cot.report_date || '-'}</p>
+    </div>
+  );
+}
+
+function CommodityMacroGrid({ macro }) {
+  const levels = macro?.levels || {};
+  const correlations = macro?.correlations || {};
+  const labels = macro?.labels || {};
+  const keys = ['real_yield_10y', 'dxy', 'vix', 'sp500', 'cpi_yoy'].filter((key) => levels[key] !== undefined && levels[key] !== null);
+
+  if (!keys.length) {
+    return <p className="text-[13px] app-muted">Konteks makro belum tersedia.</p>;
+  }
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {keys.map((key) => (
+        <div key={key} className="rounded-xl bg-gray-50 dark:bg-white/[0.04] px-3 py-3">
+          <p className="text-[11px] app-muted font-bold uppercase tracking-wider">{labels[key] || key.replace(/_/g, ' ')}</p>
+          <p className="text-[16px] font-black app-heading mt-1">{formatDecimal(levels[key], 2)}</p>
+          {correlations[key] !== undefined && (
+            <p className={`text-[11px] mt-1 ${Number(correlations[key]) <= -0.3 ? 'text-[#05A845]' : Number(correlations[key]) >= 0.3 ? 'text-red-500' : 'app-muted'}`}>
+              Korelasi {formatDecimal(correlations[key], 2)}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CommoditySeasonality({ seasonality }) {
+  const returns = seasonality?.avg_return_by_month || {};
+  const currentMonth = Number(seasonality?.current_month || new Date().getMonth() + 1);
+  const values = Array.from({ length: 12 }, (_, index) => Number(returns[String(index + 1)] || 0));
+  const maxAbs = Math.max(...values.map((value) => Math.abs(value)), 1);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const selectedValue = values[Math.max(0, selectedMonth - 1)] || 0;
+
+  return (
+    <div>
+      <div className="grid grid-cols-6 md:grid-cols-12 gap-2">
+        {values.map((value, index) => {
+          const month = index + 1;
+          const height = Math.max(12, (Math.abs(value) / maxAbs) * 72);
+          const active = month === currentMonth;
+          const selected = month === selectedMonth;
+          return (
+            <button
+              key={month}
+              type="button"
+              onClick={() => setSelectedMonth(month)}
+              onMouseEnter={() => setSelectedMonth(month)}
+              className={`rounded-xl px-2 py-2 text-center transition-all ${selected
+                ? 'bg-[#EAF6ED] dark:bg-[#05A845]/10 ring-2 ring-[#05A845]/40 shadow-sm'
+                : active
+                  ? 'bg-[#EAF6ED] dark:bg-[#05A845]/10 ring-1 ring-[#05A845]/30'
+                  : 'bg-gray-50 dark:bg-white/[0.04] hover:bg-[#EAF6ED]/60 dark:hover:bg-[#05A845]/10'
+              }`}
+              title={`${monthShortLabels[index]}: ${formatSignedPercent(value, 1)}`}
+            >
+              <div className="h-20 flex items-end justify-center mb-2">
+                <div
+                  className={`w-4 rounded-t ${value >= 0 ? 'bg-[#05A845]' : 'bg-red-500'}`}
+                  style={{ height }}
+                />
+              </div>
+              <p className="text-[10px] font-bold app-muted">{monthShortLabels[index]}</p>
+              <p className={`text-[10px] font-black ${value >= 0 ? 'text-[#05A845]' : 'text-red-500'}`}>{formatSignedPercent(value, 1)}</p>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 rounded-xl bg-gray-50 dark:bg-white/[0.04] px-3 py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+        <p className="text-[12px] app-heading font-bold">
+          {monthShortLabels[selectedMonth - 1]}: <span className={selectedValue >= 0 ? 'text-[#05A845]' : 'text-red-500'}>{formatSignedPercent(selectedValue, 1)}</span>
+        </p>
+        <p className="text-[12px] app-muted">
+          Bias bulan berjalan: {formatSignedPercent(seasonality?.current_month_bias_pct || 0, 1)}. Confidence: {seasonality?.confidence || 'n/a'}.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CommodityPriceChart({ candles, loading, error, currency }) {
+  const [hoverIndex, setHoverIndex] = useState(null);
+  if (loading) {
+    return <div className="h-72 rounded-2xl bg-gray-50 dark:bg-white/[0.04] animate-pulse" />;
+  }
+
+  if (error) {
+    return <p className="text-[13px] app-muted">{error}</p>;
+  }
+
+  const points = (candles || []).filter((item) => Number.isFinite(Number(item.close))).slice(-90);
+  if (!points.length) {
+    return <p className="text-[13px] app-muted">Belum ada data harga historis.</p>;
+  }
+
+  const values = points.map((item) => convertCommodityPriceToIdr(item.close, currency)).filter((value) => Number.isFinite(value));
+  if (!values.length) {
+    return <p className="text-[13px] app-muted">Belum ada data harga historis.</p>;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const width = 900;
+  const height = 260;
+  const coords = points.map((point, index) => {
+    const closeIdr = convertCommodityPriceToIdr(point.close, currency) || 0;
+    const x = (index / Math.max(points.length - 1, 1)) * width;
+    const y = height - ((closeIdr - min) / range) * (height - 24) - 12;
+    return { point, x, y, close: closeIdr, sourceClose: Number(point.close) };
+  });
+  const path = coords.map((coord, index) => `${index === 0 ? 'M' : 'L'} ${coord.x.toFixed(2)} ${coord.y.toFixed(2)}`).join(' ');
+  const areaPath = `${path} L ${width} ${height} L 0 ${height} Z`;
+  const first = values[0];
+  const last = values[values.length - 1];
+  const changePct = first ? ((last - first) / first) * 100 : 0;
+  const activeIndex = hoverIndex ?? points.length - 1;
+  const active = coords[Math.min(Math.max(activeIndex, 0), coords.length - 1)];
+  const activeDate = active?.point?.date || active?.point?.timestamp || active?.point?.market_time || '';
+
+  const handlePointerMove = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const pct = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1);
+    setHoverIndex(Math.round(pct * (points.length - 1)));
+  };
+
+  return (
+    <div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+        <div>
+          <p className="text-[22px] font-black app-heading">{formatIDR(last)}</p>
+          <p className={`text-[12px] font-bold ${changePct >= 0 ? 'text-[#05A845]' : 'text-red-500'}`}>
+            {formatSignedPercent(changePct, 2)} dalam periode chart
+          </p>
+        </div>
+        <div className="text-[11px] app-muted sm:text-right">
+          <p>Range {formatIDR(min)} - {formatIDR(max)}</p>
+          {active && (
+            <p className="font-bold app-heading">
+              {String(activeDate).slice(0, 10)} · {formatIDR(active.close)}
+            </p>
+          )}
+        </div>
+      </div>
+      <div
+        className="rounded-2xl bg-gray-50 dark:bg-white/[0.04] p-3 overflow-hidden cursor-crosshair"
+        onPointerMove={handlePointerMove}
+        onPointerLeave={() => setHoverIndex(null)}
+      >
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-72" preserveAspectRatio="none" role="img" aria-label="Grafik harga komoditas">
+          <defs>
+            <linearGradient id="commodityChartGradient" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#05A845" stopOpacity="0.24" />
+              <stop offset="100%" stopColor="#05A845" stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+          <path d={areaPath} fill="url(#commodityChartGradient)" />
+          <path d={path} fill="none" stroke={changePct >= 0 ? '#05A845' : '#ef4444'} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+          {active && (
+            <>
+              <line x1={active.x} x2={active.x} y1="0" y2={height} stroke="#111827" strokeOpacity="0.16" strokeWidth="2" />
+              <circle cx={active.x} cy={active.y} r="7" fill={changePct >= 0 ? '#05A845' : '#ef4444'} stroke="white" strokeWidth="3" />
+            </>
+          )}
+        </svg>
+      </div>
+      {commodityFxNote(currency) && (
+        <p className="text-[11px] app-muted mt-2 text-right">{commodityFxNote(currency)}</p>
+      )}
+    </div>
+  );
+}
+
+function CommodityScoreBreakdown({ title, scores, reasoning, labels }) {
+  const keys = Object.keys(labels);
+  return (
+    <CommodityPanel title={title}>
+      <div className="space-y-3">
+        {keys.map((key) => {
+          const score = Number(scores?.[key]);
+          const reasons = Array.isArray(reasoning?.[key]) ? reasoning[key] : [];
+          return (
+            <div key={key} className="rounded-xl bg-gray-50 dark:bg-white/[0.04] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[13px] font-bold app-heading">{labels[key]}</p>
+                <p className={`text-[13px] font-black ${score >= 6.5 ? 'text-[#05A845]' : score >= 4.5 ? 'text-amber-500' : 'text-red-500'}`}>
+                  {Number.isFinite(score) ? `${formatDecimal(score, 1)}/10` : '-'}
+                </p>
+              </div>
+              {reasons.length > 0 && (
+                <ul className="mt-2 space-y-1 text-[12px] app-muted leading-relaxed">
+                  {reasons.slice(0, 3).map((reason) => (
+                    <li key={reason}>- {reason}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </CommodityPanel>
   );
 }
 
