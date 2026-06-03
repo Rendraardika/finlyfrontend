@@ -270,7 +270,7 @@ export default function Transaksi() {
               className="flex items-center justify-center gap-2 w-full px-5 py-2.5 rounded-xl border border-[#05A845] text-[#05A845] font-semibold text-[14px] hover:bg-[#EAF6ED] dark:hover:bg-[#05A845]/10 transition-colors shadow-sm"
             >
               <MessageCircle size={18} className="shrink-0" />
-              <span className="truncate">Link WhatsApp</span>
+              <span className="truncate">Hubungkan WhatsApp</span>
             </button>
 
             <button
@@ -722,7 +722,7 @@ function WhatsAppLinkModal({ isOpen, onClose, code, isLoading, onCreateCode, onC
           <div className="min-w-0">
             <div className="mb-1 flex items-center gap-2 text-[#05A845]">
               <MessageCircle size={21} className="shrink-0" />
-              <h2 className="text-[21px] font-bold text-[#1A1A1A] dark:text-white">Link WhatsApp</h2>
+              <h2 className="text-[21px] font-bold text-[#1A1A1A] dark:text-white">Hubungkan WhatsApp</h2>
             </div>
             <p className="text-[13px] text-gray-600 dark:text-gray-300">
               Hubungkan nomor WhatsApp ke akun ini untuk input pemasukan dan pengeluaran lewat chat.
