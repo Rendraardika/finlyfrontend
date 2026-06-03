@@ -95,11 +95,14 @@ export default function Anggaran() {
                 [selectedBudgetPeriod]: normalizedItems,
               }));
             }
+            if (refreshNotifications) {
+              await refreshNotifications();
+            }
           }
       } catch (_error) {
           setBudgetTransactions([]);
       }
-  }, [selectedBudgetPeriod]);
+  }, [refreshNotifications, selectedBudgetPeriod]);
 
   React.useEffect(() => {
     let isMounted = true;

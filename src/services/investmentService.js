@@ -212,6 +212,16 @@ export const getInvestmentProductAnalysis = async (type, symbol) => {
   return response.data;
 };
 
+export const createInvestmentPriceAlert = async (payload) => {
+  const response = await api.post('/investments/price-alerts', payload);
+  return response.data;
+};
+
+export const checkInvestmentPriceAlerts = async (prices = []) => {
+  const response = await api.post('/investments/price-alerts/check', { prices });
+  return response.data;
+};
+
 export const getCommodityListing = async (params = {}) => {
   const response = await api.get('/commodity', { params });
   return setCachedPayload(COMMODITY_LISTING_CACHE_KEY, response.data);

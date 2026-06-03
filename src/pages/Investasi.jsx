@@ -28,6 +28,8 @@ import {
   getCommodityListing,
   getCommodityNews,
   getCommodityPrices,
+  checkInvestmentPriceAlerts,
+  createInvestmentPriceAlert,
   getInvestmentMarketByRisk,
   getInvestmentProductAnalysis,
   submitRiskQuiz,
@@ -935,7 +937,7 @@ function AssetLogo({ stock, size = 'md' }) {
 
 export default function Investasi() {
   const { user } = useAuth();
-  const { addNotification } = useNotification();
+  const { addNotification, refreshNotifications } = useNotification();
   const { showSuccess, showWarning } = useToast();
   const quizTopRef = useRef(null);
   const storageKeys = useMemo(() => getInvestmentStorageKeys(user), [user]);
@@ -1194,6 +1196,40 @@ export default function Investasi() {
   }, [priceAlerts, storageKeys.priceAlerts]);
 
   useEffect(() => {
+    if (!combinedMarketAssets.length) return;
+
+    const prices = combinedMarketAssets
+      .filter((asset) => asset?.ticker && Number(asset.price) > 0)
+      .map((asset) => ({
+        symbol: asset.ticker,
+        name: asset.name,
+        market: asset.market,
+        asset_type: asset.apiType || asset.market,
+        current_price: Number(asset.price),
+      }));
+
+    if (!prices.length) return;
+
+    let ignore = false;
+    const run = async () => {
+      try {
+        const response = await checkInvestmentPriceAlerts(prices);
+        const triggered = response?.data?.triggered || [];
+        if (!ignore && triggered.length && refreshNotifications) {
+          await refreshNotifications();
+        }
+      } catch (_error) {
+      }
+    };
+
+    run();
+
+    return () => {
+      ignore = true;
+    };
+  }, [combinedMarketAssets, refreshNotifications]);
+
+  useEffect(() => {
     const triggeredAlerts = priceAlerts.filter((alert) => {
       if (alert.triggered) return false;
       const stock = combinedMarketAssets.find((item) => item.ticker === alert.ticker);
@@ -1395,7 +1431,7 @@ export default function Investasi() {
     showSuccess(`${stock.ticker} ditambahkan ke favorit.`);
   };
 
-  const handleSavePriceAlert = (stock, targetPrice) => {
+  const handleSavePriceAlert = async (stock, targetPrice) => {
     const normalizedTarget = Number(targetPrice);
     if (!normalizedTarget || normalizedTarget <= 0) {
       showWarning('Masukkan target harga yang valid.');
@@ -1407,6 +1443,21 @@ export default function Investasi() {
     }
 
     const direction = normalizedTarget >= Number(stock.price) ? 'above' : 'below';
+    let backendTriggered = false;
+    try {
+      const response = await createInvestmentPriceAlert({
+        symbol: stock.ticker,
+        name: stock.name,
+        market: stock.market,
+        asset_type: stock.apiType || stock.market,
+        current_price: Number(stock.price),
+        target_price: normalizedTarget,
+      });
+      backendTriggered = Boolean(response?.data?.triggered);
+    } catch (_error) {
+      showWarning('Alert tersimpan lokal, tetapi server notifikasi belum merespons.');
+    }
+
     setPriceAlerts((prev) => [
       {
         id: `${stock.ticker}-${Date.now()}`,
@@ -1422,7 +1473,13 @@ export default function Investasi() {
       ...prev.filter((alert) => alert.ticker !== stock.ticker || alert.triggered),
     ]);
     setAlertTargetStock(null);
+    if (refreshNotifications) {
+      await refreshNotifications();
+    }
     showSuccess(`Alert ${stock.ticker} disimpan.`);
+    if (backendTriggered) {
+      showWarning(`Harga ${stock.ticker} sudah menyentuh target alert.`);
+    }
   };
 
   return (

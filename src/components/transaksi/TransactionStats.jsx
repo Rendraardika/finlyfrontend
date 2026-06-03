@@ -5,7 +5,7 @@ const formatIDR = (amount) => new Intl.NumberFormat('id-ID', {
   style: 'currency',
   currency: 'IDR',
   minimumFractionDigits: 0,
-}).format(Math.abs(Number(amount || 0)));
+}).format(Number(amount || 0));
 
 export default function TransactionStats({ summary }) {
   const totalIncome = summary?.total_income ?? summary?.totalIncome ?? 0;
@@ -22,7 +22,7 @@ export default function TransactionStats({ summary }) {
           <span className="text-[13px] font-medium text-[#666666] dark:text-gray-400">Total Pemasukan</span>
         </div>
         <div>
-          <h2 className="text-[28px] font-bold text-[#05A845] leading-none mb-2">{formatIDR(totalIncome)}</h2>
+          <h2 className="text-[28px] font-bold text-[#05A845] leading-none mb-2">{formatIDR(Math.abs(totalIncome))}</h2>
 
         </div>
       </div>
@@ -35,7 +35,7 @@ export default function TransactionStats({ summary }) {
           <span className="text-[13px] font-medium text-[#666666] dark:text-gray-400">Total Pengeluaran</span>
         </div>
         <div>
-          <h2 className="text-[28px] font-bold text-red-500 leading-none mb-2">{formatIDR(totalExpense)}</h2>
+          <h2 className="text-[28px] font-bold text-red-500 leading-none mb-2">{formatIDR(Math.abs(totalExpense))}</h2>
 
         </div>
       </div>

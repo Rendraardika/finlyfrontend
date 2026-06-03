@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Search, Filter, Plus, Sparkles, ChevronDown, ChevronUp,
   Pencil, Trash2, FileText, ChevronLeft, ChevronRight,
-  FileSpreadsheet, Loader
+  FileSpreadsheet, Loader, MessageCircle, ExternalLink, Copy, X
 } from 'lucide-react';
 import AppLayout from '../components/AppLayout';
 import TransactionStats from '../components/transaksi/TransactionStats';
@@ -15,6 +15,10 @@ import useTransactions from '../hooks/useTransactions';
 import useClickOutside from '../hooks/useClickOutside';
 import { formatIDR } from '../utils/transactionViewModel';
 import { compareIndonesianDates, getMonthYearFromIndonesianDate } from '../utils/dateHelper';
+import { createWhatsAppLinkCode } from '../services/whatsappLinkService';
+
+const WHATSAPP_BOT_PHONE_DISPLAY = '+62 877-6371-4489';
+const WHATSAPP_BOT_PHONE_LINK = '6287763714489';
 
 export default function Transaksi() {
   const { showSuccess, showError, showInfo } = useToast();
@@ -46,6 +50,9 @@ export default function Transaksi() {
   const [nominalInput, setNominalInput] = useState('');
 
   const [isSmartOpen, setIsSmartOpen] = useState(false);
+  const [isWhatsAppOpen, setIsWhatsAppOpen] = useState(false);
+  const [whatsappCode, setWhatsappCode] = useState(null);
+  const [whatsappCodeLoading, setWhatsappCodeLoading] = useState(false);
   const [smartStep, setSmartStep] = useState(1);
   const [scanResult, setScanResult] = useState(null);
   const filterControlsRef = useRef(null);
@@ -126,6 +133,30 @@ export default function Transaksi() {
     if (saved) {
       setSelectedMonth('Semua Waktu');
       closeSmartModal();
+    }
+  };
+
+  const handleCreateWhatsAppCode = async () => {
+    try {
+      setWhatsappCodeLoading(true);
+      const code = await createWhatsAppLinkCode();
+      setWhatsappCode(code);
+      showSuccess('Kode link WhatsApp berhasil dibuat');
+    } catch (error) {
+      showError(error.response?.data?.message || 'Gagal membuat kode link WhatsApp');
+    } finally {
+      setWhatsappCodeLoading(false);
+    }
+  };
+
+  const handleCopyWhatsAppCode = async () => {
+    if (!whatsappCode?.code) return;
+
+    try {
+      await navigator.clipboard.writeText(`link ${whatsappCode.code}`);
+      showSuccess('Kode link disalin');
+    } catch (_error) {
+      showInfo(`Kirim ke bot: link ${whatsappCode.code}`);
     }
   };
 
@@ -222,7 +253,7 @@ export default function Transaksi() {
           </div>
 
           {!isLoading && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full md:w-auto">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full md:w-auto">
             <button
               onClick={() => {
                 setIsSmartOpen(true);
@@ -232,6 +263,14 @@ export default function Transaksi() {
             >
               <Sparkles size={18} className="shrink-0" />
               <span className="truncate">Smart Input AI</span>
+            </button>
+
+            <button
+              onClick={() => setIsWhatsAppOpen(true)}
+              className="flex items-center justify-center gap-2 w-full px-5 py-2.5 rounded-xl border border-[#05A845] text-[#05A845] font-semibold text-[14px] hover:bg-[#EAF6ED] dark:hover:bg-[#05A845]/10 transition-colors shadow-sm"
+            >
+              <MessageCircle size={18} className="shrink-0" />
+              <span className="truncate">Link WhatsApp</span>
             </button>
 
             <button
@@ -446,7 +485,7 @@ export default function Transaksi() {
                     </div>
                     <div className="shrink-0 text-right">
                       <p className={`text-[14px] font-bold whitespace-nowrap ${trx.type === 'income' ? 'text-[#05A845]' : 'text-red-500'}`}>
-                        {trx.type === 'income' ? '' : '-'} {formatIDR(trx.amount)}
+                        {trx.type === 'income' ? '' : '-'} {formatIDR(Math.abs(trx.amount))}
                       </p>
                       <button className="mt-1 text-gray-400 dark:text-gray-500 p-1">
                         {expandedRow === trx.id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
@@ -551,7 +590,7 @@ export default function Transaksi() {
                           <span className="px-3 py-1 app-chip rounded-lg text-[12px] font-semibold whitespace-nowrap">{trx.category}</span>
                         </td>
                         <td className={`px-6 py-4 text-[15px] font-bold text-right whitespace-nowrap ${trx.type === 'income' ? 'text-[#05A845]' : 'text-red-500'}`}>
-                          {trx.type === 'income' ? '' : '-'} {formatIDR(trx.amount)}
+                          {trx.type === 'income' ? '' : '-'} {formatIDR(Math.abs(trx.amount))}
                         </td>
                         <td className="px-6 py-4 text-right">
                           <button className="text-gray-400 group-hover:text-[#1A1A1A] dark:group-hover:text-white transition-colors p-1">
@@ -660,6 +699,137 @@ export default function Transaksi() {
         triggerSimulateAI={handleSimulateAI}
       />
 
+      <WhatsAppLinkModal
+        isOpen={isWhatsAppOpen}
+        onClose={() => setIsWhatsAppOpen(false)}
+        code={whatsappCode}
+        isLoading={whatsappCodeLoading}
+        onCreateCode={handleCreateWhatsAppCode}
+        onCopyCode={handleCopyWhatsAppCode}
+      />
+
     </AppLayout>
+  );
+}
+
+function WhatsAppLinkModal({ isOpen, onClose, code, isLoading, onCreateCode, onCopyCode }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 backdrop-blur-sm px-4 py-6">
+      <div className="w-full max-w-2xl overflow-hidden rounded-[24px] bg-white dark:bg-[#1f2028] shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-gray-100 dark:border-[#2e303a] px-6 py-5">
+          <div className="min-w-0">
+            <div className="mb-1 flex items-center gap-2 text-[#05A845]">
+              <MessageCircle size={21} className="shrink-0" />
+              <h2 className="text-[21px] font-bold text-[#1A1A1A] dark:text-white">Link WhatsApp</h2>
+            </div>
+            <p className="text-[13px] text-gray-600 dark:text-gray-300">
+              Hubungkan nomor WhatsApp ke akun ini untuk input pemasukan dan pengeluaran lewat chat.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-[#1A1A1A] dark:hover:bg-white/[0.06] dark:hover:text-white"
+            aria-label="Tutup"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(100vh-190px)] overflow-y-auto px-6 py-5">
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Nomor Bot
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-xl border border-emerald-200 bg-white px-4 py-2 font-semibold text-[#1A1A1A] dark:border-emerald-500/25 dark:bg-gray-900/40 dark:text-white">
+                    {WHATSAPP_BOT_PHONE_DISPLAY}
+                  </span>
+                  <a
+                    href={`https://wa.me/${WHATSAPP_BOT_PHONE_LINK}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-[13px] font-semibold text-[#05A845] transition-colors hover:bg-emerald-100 dark:hover:bg-emerald-500/10"
+                  >
+                    <ExternalLink size={15} />
+                    Buka WhatsApp
+                  </a>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onCreateCode}
+                disabled={isLoading}
+                className="rounded-xl bg-[#05A845] px-5 py-3 text-[14px] font-semibold text-white shadow-sm transition-colors hover:bg-[#048A38] disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isLoading ? 'Membuat...' : 'Buat Kode'}
+              </button>
+            </div>
+
+            {code && (
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-white px-4 py-3 dark:border-emerald-500/25 dark:bg-gray-900/40">
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Kirim ke WhatsApp bot
+                </p>
+                <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="font-mono text-[22px] font-bold tracking-wider text-[#1A1A1A] dark:text-white">
+                    link {code.code}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onCopyCode}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-[13px] font-semibold text-gray-600 transition-colors hover:bg-gray-50 hover:text-[#05A845] dark:border-[#2e303a] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+                  >
+                    <Copy size={15} />
+                    Salin
+                  </button>
+                </div>
+                <p className="mt-1 text-[12px] text-gray-500 dark:text-gray-400">
+                  Kode berlaku 10 menit dan hanya bisa dipakai sekali.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <FormatExample
+              title="Contoh Pengeluaran"
+              lines={[
+                'pengeluaran 50000 makan ayam',
+                'keluar 15rb parkir metode tunai'
+              ]}
+            />
+            <FormatExample
+              title="Contoh Pemasukan"
+              lines={[
+                'pemasukan 2jt gaji',
+                'masuk 750000 freelance tanggal hari ini'
+              ]}
+            />
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-3 text-[13px] text-gray-600 dark:border-[#2e303a] dark:bg-white/[0.04] dark:text-gray-300">
+            Kalau format salah, bot akan membalas contoh format. Nominal bisa ditulis sebagai 50000, 15rb, atau 2jt.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FormatExample({ title, lines }) {
+  return (
+    <div className="rounded-2xl border border-gray-100 bg-white px-4 py-4 dark:border-[#2e303a] dark:bg-white/[0.03]">
+      <p className="mb-3 text-[14px] font-bold text-[#1A1A1A] dark:text-white">{title}</p>
+      <div className="space-y-2">
+        {lines.map((line) => (
+          <p key={line} className="font-mono text-[12px] text-gray-700 dark:text-gray-300">{line}</p>
+        ))}
+      </div>
+    </div>
   );
 }
