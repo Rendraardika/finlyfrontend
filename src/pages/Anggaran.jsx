@@ -39,7 +39,7 @@ import {
 export default function Anggaran() {
   const [activeTab, setActiveTab] = useState('kategori');
   const { confirm } = useConfirm();
-  const { showSuccess } = useToast();
+  const { showSuccess, showError } = useToast();
   const { refreshNotifications } = useNotification();
 
   const [selectedBudgetPeriod, setSelectedBudgetPeriod] = useState(initialBudgetPeriod);
@@ -160,10 +160,35 @@ export default function Anggaran() {
   }, [loadBudgetData, loadRecurringData, refreshNotifications]);
 
   const handleSaveBudgetCategories = async (updatedCategories) => {
+    const mergedCategories = updatedCategories.map((category) => {
+      const existing = budgetCategories.find((item) => (
+        item.id === category.id ||
+        item.budgetGroup === category.budgetGroup ||
+        item.title === category.title
+      ));
+
+      return {
+        ...category,
+        spent: Number(existing?.spent ?? category.spent ?? 0),
+        fromBackend: existing?.fromBackend ?? category.fromBackend ?? true,
+      };
+    });
+
+    setBudgetCategoriesByPeriod((prev) => {
+      const nextPeriods = {
+        ...prev,
+        [selectedBudgetPeriod]: mergedCategories,
+      };
+
+      saveBudgetPeriods(nextPeriods);
+      return nextPeriods;
+    });
+    setIsEditBudgetOpen(false);
+
     try {
       await saveBudgetLimits({
         month: selectedBudgetPeriod,
-        items: updatedCategories.map((category) => ({
+        items: mergedCategories.map((category) => ({
           category_id: Number(category.categoryId || category.id) ? Number(category.categoryId || category.id) : null,
           category_name: category.title,
           budget_group: category.budgetGroup || category.budget_group || 'needs',
@@ -173,21 +198,9 @@ export default function Anggaran() {
       });
       await refreshBudgetScreen();
     } catch (_error) {
+      showError('Gagal menyimpan anggaran. Data terakhir akan dimuat ulang.');
+      await loadBudgetData();
     }
-
-    setBudgetCategoriesByPeriod((prev) => {
-      const nextPeriods = {
-        ...prev,
-        [selectedBudgetPeriod]: updatedCategories.map((category) => ({
-          ...category,
-          spent: 0,
-        })),
-      };
-
-      saveBudgetPeriods(nextPeriods);
-      return nextPeriods;
-    });
-    setIsEditBudgetOpen(false);
   };
 
   const openAddSubscription = () => {
