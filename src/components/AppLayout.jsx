@@ -38,6 +38,7 @@ export default function AppLayout({ children, activeMenu = 'dashboard' }) {
   const { notifications, markAllAsRead, markOneAsRead, hasUnread } = useNotification();
   
   const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState(() => localStorage.getItem('profileAvatar') || '');
   const notifRef = useRef(null);
 
   const handleLogout = () => {
@@ -57,6 +58,15 @@ export default function AppLayout({ children, activeMenu = 'dashboard' }) {
     }
     document.documentElement.classList.toggle('dark', savedTheme === 'dark');
     document.documentElement.style.colorScheme = savedTheme;
+  }, []);
+
+  useEffect(() => {
+    const handleAvatarUpdated = (event) => {
+      setAvatarUrl(event.detail || localStorage.getItem('profileAvatar') || '');
+    };
+
+    window.addEventListener('finly:profile-avatar-updated', handleAvatarUpdated);
+    return () => window.removeEventListener('finly:profile-avatar-updated', handleAvatarUpdated);
   }, []);
 
   useClickOutside(notifRef, () => setIsNotifOpen(false), isNotifOpen);
@@ -139,7 +149,7 @@ export default function AppLayout({ children, activeMenu = 'dashboard' }) {
             </div>
 
             <Link to="/profile" className="w-9 h-9 rounded-full bg-gray-200 overflow-hidden border border-gray-300 dark:border-gray-700 hover:ring-2 hover:ring-[#05A845] hover:border-transparent transition-all cursor-pointer block">
-              <img src={`https://ui-avatars.com/api/?name=${firstName}&background=05A845&color=fff`} alt="Avatar" className="w-full h-full object-cover" />
+              <img src={avatarUrl || `https://ui-avatars.com/api/?name=${firstName}&background=05A845&color=fff`} alt="Avatar" className="w-full h-full object-cover" />
             </Link>
             <button
               type="button"

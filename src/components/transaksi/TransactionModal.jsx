@@ -6,17 +6,22 @@ import CustomSelect from '../ui/CustomSelect';
 
 const defaultCategories = {
   expense: [
+    'Kebutuhan Pokok',
     'Makanan & Minuman',
     'Transportasi',
     'Tagihan & Utilitas',
+    'Tempat Tinggal',
     'Belanja',
     'Hiburan',
     'Kesehatan',
     'Pendidikan',
+    'Cicilan & Utang',
+    'Tabungan & Investasi',
     'Lainnya',
   ],
   income: [
     'Gaji',
+    'Uang Saku',
     'Bonus / THR',
     'Hasil Investasi',
     'Freelance',

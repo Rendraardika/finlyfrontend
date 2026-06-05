@@ -588,6 +588,10 @@ const mergeAnalysisIntoAsset = (asset, analysisResponse) => {
 
   return {
     ...asset,
+    imageUrl: getAssetLogoUrl({
+      ...asset,
+      imageUrl: analysis.image_url || analysis.logo_url || marketData.image_url || marketData.logo_url || payload.image_url || payload.logo_url || asset.imageUrl,
+    }),
     score,
     fundamental,
     technical,
@@ -912,18 +916,77 @@ const assetLogoMap = {
   TSLA: { text: 'T', className: 'bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-300' },
 };
 
+const stockLogoDomains = {
+  ACES: 'aspirasihidup.com',
+  ADRO: 'alamtri.com',
+  AKRA: 'akr.co.id',
+  AMRT: 'alfamart.co.id',
+  ANTM: 'antam.com',
+  BBCA: 'bca.co.id',
+  BBRI: 'bri.co.id',
+  BMRI: 'bankmandiri.co.id',
+  BRIS: 'bankbsi.co.id',
+  BUKA: 'bukalapak.com',
+  EMTK: 'emtek.co.id',
+  INDF: 'indofood.com',
+  MAPI: 'map.co.id',
+  TINS: 'timah.com',
+  TLKM: 'telkom.co.id',
+  UNVR: 'unilever.co.id',
+};
+
+const localLogoSpecs = {
+  ACES: { bg: '#F2FBF6', border: '#D7F1E2', color: '#0F9D58', text: 'AC' },
+  AKRA: { bg: '#EEF4FF', border: '#D7E4FF', color: '#21409A', text: 'AKR' },
+  AMRT: { bg: '#FFF5F5', border: '#FFE0E0', color: '#E31E24', text: 'A' },
+  EMTK: { bg: '#FFF8E7', border: '#F4E2A8', color: '#B38A18', text: 'EM' },
+  INDF: { bg: '#F3F5FF', border: '#DDE3FF', color: '#4057A6', text: 'IF' },
+  MAPI: { bg: '#F5F7FF', border: '#DDE5FF', color: '#2D54B8', text: 'MAP' },
+  TINS: { bg: '#F2F6FF', border: '#D9E3F7', color: '#6379B8', text: 'Ti' },
+};
+
+const makeLocalLogoSvg = ({ bg, border, color, text }) => (
+  `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="16" fill="${bg}"/>
+      <rect x="4" y="4" width="56" height="56" rx="14" fill="none" stroke="${border}" stroke-width="4"/>
+      <text x="32" y="39" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="${text.length > 2 ? 17 : 22}" font-weight="800" fill="${color}">${text}</text>
+    </svg>
+  `)}`
+);
+
+const getAssetLogoUrl = (stock) => {
+  const ticker = String(stock?.ticker || stock?.symbol || '').toUpperCase();
+  if (localLogoSpecs[ticker]) return makeLocalLogoSvg(localLogoSpecs[ticker]);
+
+  const directUrl = stock?.imageUrl || stock?.logo_url || stock?.logoUrl || stock?.metadata?.logo_url || stock?.raw?.metadata?.logo_url;
+  if (directUrl) return directUrl;
+
+  const domain = stockLogoDomains[ticker];
+  if (domain) return `https://www.google.com/s2/favicons?sz=128&domain=${domain}`;
+
+  return '';
+};
+
 function AssetLogo({ stock, size = 'md' }) {
-  const ticker = String(stock?.ticker || stock?.symbol || 'AS');
+  const ticker = String(stock?.ticker || stock?.symbol || 'AS').toUpperCase();
   const logo = assetLogoMap[ticker] || {
     text: ticker.slice(0, 2),
     className: 'bg-[#EAF6ED] text-[#05A845] dark:bg-[#05A845]/15 dark:text-[#2ee879]',
   };
   const sizeClass = size === 'lg' ? 'w-12 h-12 text-[15px]' : 'w-10 h-10 text-[12px]';
+  const [hasImageError, setHasImageError] = useState(false);
+  const imageUrl = hasImageError ? '' : getAssetLogoUrl(stock);
 
-  if (stock?.imageUrl) {
+  if (imageUrl) {
     return (
       <div className={`${sizeClass} rounded-2xl bg-gray-50 dark:bg-white/[0.04] border border-gray-100 dark:border-[#2e303a] flex items-center justify-center overflow-hidden shrink-0`}>
-        <img src={stock.imageUrl} alt={ticker} className="w-7 h-7 object-contain" />
+        <img
+          src={imageUrl}
+          alt={ticker}
+          className="w-7 h-7 object-contain"
+          onError={() => setHasImageError(true)}
+        />
       </div>
     );
   }

@@ -20,6 +20,252 @@ import { createWhatsAppLinkCode } from '../services/whatsappLinkService';
 const WHATSAPP_BOT_PHONE_DISPLAY = '+62 877-6371-4489';
 const WHATSAPP_BOT_PHONE_LINK = '6287763714489';
 
+const sanitizeFileName = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '') || 'semua';
+
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+const downloadBlob = (content, fileName, mimeType) => {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
+const getTransactionExportRows = (items) => items.map((trx, index) => ({
+  no: index + 1,
+  tanggal: trx.date || '-',
+  deskripsi: trx.title || '-',
+  merchant: trx.merchant || '-',
+  kategori: trx.category || '-',
+  tipe: trx.type === 'income' ? 'Pemasukan' : 'Pengeluaran',
+  nominal: Number(Math.abs(trx.amount || 0)),
+  catatan: trx.note || '-',
+}));
+
+const getExportSummary = (items) => {
+  const income = items
+    .filter((trx) => trx.type === 'income')
+    .reduce((total, trx) => total + Math.abs(Number(trx.amount || 0)), 0);
+  const expense = items
+    .filter((trx) => trx.type === 'expense')
+    .reduce((total, trx) => total + Math.abs(Number(trx.amount || 0)), 0);
+  return { income, expense, balance: income - expense };
+};
+
+const buildExcelWorkbook = ({ rows, summary, generatedAt, filterLabel }) => {
+  const summaryRows = [
+    ['Total Pemasukan', summary.income],
+    ['Total Pengeluaran', summary.expense],
+    ['Selisih Bersih', summary.balance],
+    ['Jumlah Transaksi', rows.length],
+    ['Filter', filterLabel],
+    ['Tanggal Export', generatedAt],
+  ];
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { font-family: Arial, sans-serif; }
+    table { border-collapse: collapse; width: 100%; }
+    th { background: #05A845; color: #fff; font-weight: 700; }
+    th, td { border: 1px solid #d9e2ec; padding: 8px; font-size: 12px; }
+    .title { font-size: 20px; font-weight: 700; color: #111827; }
+    .money { mso-number-format:"\\#\\,\\#\\#0"; text-align: right; }
+  </style>
+</head>
+<body>
+  <p class="title">Riwayat Transaksi Finly</p>
+  <table>
+    <tbody>
+      ${summaryRows.map(([label, value]) => `
+        <tr>
+          <td><strong>${escapeHtml(label)}</strong></td>
+          <td>${typeof value === 'number' ? value : escapeHtml(value)}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  <br />
+  <table>
+    <thead>
+      <tr>
+        <th>No</th>
+        <th>Tanggal</th>
+        <th>Deskripsi</th>
+        <th>Merchant</th>
+        <th>Kategori</th>
+        <th>Tipe</th>
+        <th>Nominal</th>
+        <th>Catatan</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((row) => `
+        <tr>
+          <td>${row.no}</td>
+          <td>${escapeHtml(row.tanggal)}</td>
+          <td>${escapeHtml(row.deskripsi)}</td>
+          <td>${escapeHtml(row.merchant)}</td>
+          <td>${escapeHtml(row.kategori)}</td>
+          <td>${escapeHtml(row.tipe)}</td>
+          <td class="money">${row.nominal}</td>
+          <td>${escapeHtml(row.catatan)}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+</body>
+</html>`;
+};
+
+const escapePdfText = (value) => String(value ?? '')
+  .normalize('NFKD')
+  .replace(/[^\x20-\x7E]/g, '')
+  .replace(/\\/g, '\\\\')
+  .replace(/\(/g, '\\(')
+  .replace(/\)/g, '\\)');
+
+const wrapPdfText = (text, maxLength) => {
+  const words = String(text || '-').split(/\s+/);
+  const lines = [];
+  let line = '';
+  words.forEach((word) => {
+    const nextLine = line ? `${line} ${word}` : word;
+    if (nextLine.length > maxLength && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = nextLine;
+    }
+  });
+  if (line) lines.push(line);
+  return lines.length ? lines : ['-'];
+};
+
+const buildPdfDocument = ({ rows, summary, generatedAt, filterLabel }) => {
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const margin = 40;
+  const bottom = 42;
+  const pages = [];
+  let commands = [];
+  let y = pageHeight - margin;
+
+  const startPage = () => {
+    if (commands.length) pages.push(commands.join('\n'));
+    commands = [];
+    y = pageHeight - margin;
+  };
+
+  const drawText = (text, x, size = 10, font = 'F1') => {
+    commands.push(`BT /${font} ${size} Tf ${x.toFixed(2)} ${y.toFixed(2)} Td (${escapePdfText(text)}) Tj ET`);
+  };
+
+  const nextLine = (height = 15) => {
+    y -= height;
+    if (y < bottom) startPage();
+  };
+
+  const drawRule = () => {
+    commands.push(`${margin} ${y.toFixed(2)} m ${pageWidth - margin} ${y.toFixed(2)} l S`);
+    nextLine(12);
+  };
+
+  drawText('Riwayat Transaksi Finly', margin, 18, 'F2');
+  nextLine(22);
+  drawText(`Dibuat: ${generatedAt}`, margin, 10);
+  nextLine(14);
+  drawText(`Filter: ${filterLabel}`, margin, 10);
+  nextLine(18);
+  drawText(`Total Pemasukan: ${formatIDR(summary.income)}`, margin, 11, 'F2');
+  drawText(`Total Pengeluaran: ${formatIDR(summary.expense)}`, 230, 11, 'F2');
+  drawText(`Selisih: ${formatIDR(summary.balance)}`, 420, 11, 'F2');
+  nextLine(20);
+  drawRule();
+
+  drawText('No', margin, 9, 'F2');
+  drawText('Tanggal', 66, 9, 'F2');
+  drawText('Deskripsi', 136, 9, 'F2');
+  drawText('Kategori', 325, 9, 'F2');
+  drawText('Tipe', 420, 9, 'F2');
+  drawText('Nominal', 480, 9, 'F2');
+  nextLine(14);
+  drawRule();
+
+  rows.forEach((row) => {
+    const titleLines = wrapPdfText(row.deskripsi, 30).slice(0, 2);
+    const noteLines = row.catatan && row.catatan !== '-' ? wrapPdfText(`Catatan: ${row.catatan}`, 72).slice(0, 2) : [];
+    const rowHeight = 14 + (titleLines.length - 1) * 11 + noteLines.length * 11;
+    if (y - rowHeight < bottom) startPage();
+
+    const rowTop = y;
+    drawText(String(row.no), margin, 9);
+    drawText(row.tanggal, 66, 9);
+    drawText(titleLines[0], 136, 9, 'F2');
+    drawText(row.kategori, 325, 9);
+    drawText(row.tipe, 420, 9);
+    drawText(formatIDR(row.nominal), 480, 9);
+
+    titleLines.slice(1).forEach((line, index) => {
+      y = rowTop - 11 * (index + 1);
+      drawText(line, 136, 9);
+    });
+    noteLines.forEach((line, index) => {
+      y = rowTop - 11 * (titleLines.length + index);
+      drawText(line, 136, 8);
+    });
+    y = rowTop - rowHeight;
+  });
+
+  if (!rows.length) {
+    drawText('Tidak ada transaksi sesuai filter.', margin, 10);
+  }
+
+  pages.push(commands.join('\n'));
+
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    `<< /Type /Pages /Kids [${pages.map((_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pages.length} >>`,
+  ];
+
+  pages.forEach((content, index) => {
+    const pageObjectNumber = 3 + index * 2;
+    const contentObjectNumber = pageObjectNumber + 1;
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> /F2 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> >> >> /Contents ${contentObjectNumber} 0 R >>`);
+    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+  });
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  return new Blob([pdf], { type: 'application/pdf' });
+};
+
 export default function Transaksi() {
   const { showSuccess, showError, showInfo } = useToast();
   const { confirm } = useConfirm();
@@ -161,6 +407,12 @@ export default function Transaksi() {
   };
 
   const pageSize = 10;
+  const transactionTypeOptions = [
+    { value: 'semua', label: 'Semua Transaksi' },
+    { value: 'pemasukan', label: 'Pemasukan' },
+    { value: 'pengeluaran', label: 'Pengeluaran' },
+  ];
+  const activeTypeLabel = transactionTypeOptions.find((option) => option.value === activeTab)?.label || 'Semua Transaksi';
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const filteredData = transactions
     .filter((trx) => {
@@ -197,6 +449,49 @@ export default function Transaksi() {
       if (sortFilter === 'terlama') return dateComparison;
       return -dateComparison;
     });
+
+  const exportFilterLabel = [
+    activeTypeLabel,
+    selectedMonth,
+    `Urutan: ${sortFilter}`,
+    normalizedSearchQuery ? `Pencarian: ${searchQuery.trim()}` : null,
+  ].filter(Boolean).join(' | ');
+  const exportFileBaseName = `riwayat-transaksi-${sanitizeFileName(activeTypeLabel)}-${sanitizeFileName(selectedMonth)}`;
+
+  const handleExportExcel = () => {
+    const rows = getTransactionExportRows(filteredData);
+    const summary = getExportSummary(filteredData);
+    const generatedAt = new Date().toLocaleString('id-ID');
+    const workbook = buildExcelWorkbook({
+      rows,
+      summary,
+      generatedAt,
+      filterLabel: exportFilterLabel,
+    });
+
+    downloadBlob(
+      workbook,
+      `${exportFileBaseName}.xls`,
+      'application/vnd.ms-excel;charset=utf-8'
+    );
+    showSuccess(`Excel riwayat transaksi berhasil diunduh (${rows.length} transaksi).`);
+  };
+
+  const handleExportPdf = () => {
+    const rows = getTransactionExportRows(filteredData);
+    const summary = getExportSummary(filteredData);
+    const generatedAt = new Date().toLocaleString('id-ID');
+    const pdf = buildPdfDocument({
+      rows,
+      summary,
+      generatedAt,
+      filterLabel: exportFilterLabel,
+    });
+
+    downloadBlob(pdf, `${exportFileBaseName}.pdf`, 'application/pdf');
+    showSuccess(`PDF riwayat transaksi berhasil diunduh (${rows.length} transaksi).`);
+  };
+
   const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageStartIndex = (safeCurrentPage - 1) * pageSize;
@@ -235,13 +530,6 @@ export default function Transaksi() {
   const toggleAmountSort = () => {
     setSortFilter((current) => (current === 'terbesar' ? 'terkecil' : 'terbesar'));
   };
-
-  const transactionTypeOptions = [
-    { value: 'semua', label: 'Semua Transaksi' },
-    { value: 'pemasukan', label: 'Pemasukan' },
-    { value: 'pengeluaran', label: 'Pengeluaran' },
-  ];
-  const activeTypeLabel = transactionTypeOptions.find((option) => option.value === activeTab)?.label || 'Semua Transaksi';
 
   return (
     <AppLayout activeMenu="transaksi">
@@ -424,7 +712,7 @@ export default function Transaksi() {
               {/* Tombol Export */}
               <div className="grid grid-cols-2 gap-2 sm:col-span-3 lg:flex">
                 <button
-                  onClick={() => showInfo('Fitur Download PDF sedang diproses...')}
+                  onClick={handleExportPdf}
                   className="flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 dark:border-[#2e303a] rounded-xl text-gray-600 dark:text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors text-[13px] font-medium whitespace-nowrap"
                 >
                   <FileText size={16} className="text-red-500 shrink-0" />
@@ -432,7 +720,7 @@ export default function Transaksi() {
                   <span className="lg:hidden">PDF</span>
                 </button>
                 <button
-                  onClick={() => showInfo('Fitur Download Excel sedang diproses...')}
+                  onClick={handleExportExcel}
                   className="flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 dark:border-[#2e303a] rounded-xl text-gray-600 dark:text-gray-400 hover:text-[#05A845] hover:bg-[#EAF6ED] dark:hover:bg-[#05A845]/10 transition-colors text-[13px] font-medium whitespace-nowrap"
                 >
                   <FileSpreadsheet size={16} className="text-[#05A845] shrink-0" />

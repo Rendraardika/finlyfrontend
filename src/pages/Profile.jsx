@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { 
-  Pencil, Check, X, Sun, Moon, Eye, EyeOff
+  Pencil, Check, X, Sun, Moon, Eye, EyeOff, Camera
 } from 'lucide-react';
 
 import AppLayout from '../components/AppLayout';
@@ -26,11 +26,13 @@ export default function Profile() {
     handlePasswordChange,
     handlePasswordSave,
     handleProfileChange,
+    handleAvatarChange,
     handleCancelProfileEdit,
     handleProfileSave,
   } = useProfileSettings({ user, showSuccess, showError });
 
   const firstName = profileData.fullName.split(' ')[0];
+  const avatarSrc = profileData.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(firstName)}&background=05A845&color=fff&size=150`;
 
   return (
     <AppLayout activeMenu="profil">
@@ -48,8 +50,21 @@ export default function Profile() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8 border-b border-gray-100 dark:border-gray-700 pb-8">
               
               <div className="flex items-center gap-5">
-                <div className="w-20 h-20 rounded-full overflow-hidden border-4 border-gray-50 dark:border-gray-700">
-                  <img src={`https://ui-avatars.com/api/?name=${firstName}&background=05A845&color=fff&size=150`} alt="Profile" className="w-full h-full object-cover" />
+                <div className="relative w-20 h-20 shrink-0">
+                  <div className="w-20 h-20 rounded-full overflow-hidden border-4 border-gray-50 dark:border-gray-700 bg-[#05A845]">
+                    <img src={avatarSrc} alt="Profile" className="w-full h-full object-cover" />
+                  </div>
+                  {isEditing && (
+                    <label className="absolute -bottom-1 -right-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-[#05A845] text-white shadow-sm ring-4 ring-white transition-colors hover:bg-[#048A38] dark:ring-gray-800">
+                      <Camera size={16} />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
+                        onChange={(event) => handleAvatarChange(event.target.files?.[0])}
+                      />
+                    </label>
+                  )}
                 </div>
                 {isEditing ? (
                   <div className="min-w-0">
@@ -90,7 +105,7 @@ export default function Profile() {
               {/* Note: Pada edit mode, biasanya email gak bisa diubah sembarangan, tapi aku biarin sesuai desainmu */}
               <ProfileField label="EMAIL" value={profileData.email} isEditing={isEditing} type="email" onChange={(value) => handleProfileChange('email', value)} />
               <ProfileField label="NO HANDPHONE" value={profileData.phone} isEditing={isEditing} onChange={(value) => handleProfileChange('phone', value)} />
-              <ProfileField label="KOTA TEMPAT TINGGAL" value={profileData.city} isEditing={isEditing} onChange={(value) => handleProfileChange('city', value)} />
+              <ProfileField label="PROVINSI DOMISILI" value={profileData.city} isEditing={isEditing} onChange={(value) => handleProfileChange('city', value)} />
               <ProfileField label="BERGABUNG SEJAK" value={profileData.joined} isEditing={false} />
             </div>
           </div>
@@ -231,7 +246,7 @@ function ProfileField({ label, value, isEditing, type = 'text', onChange }) {
           className="w-full px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-[#1A1A1A] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#EAF6ED] dark:focus:ring-gray-600 focus:border-[#05A845] transition-all"
         />
       ) : (
-        <p className="text-[16px] font-medium text-[#1A1A1A] dark:text-white">{value}</p>
+        <p className="text-[16px] font-medium text-[#1A1A1A] dark:text-white">{value || '-'}</p>
       )}
     </div>
   );

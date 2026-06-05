@@ -1,17 +1,35 @@
 import { useEffect, useState } from 'react';
 import { mockProfile } from '../services/mockData';
+import { getProfile, updatePersonalProfile } from '../services/profileService';
+
+const PROFILE_STORAGE_KEY = 'profileData';
+const AVATAR_STORAGE_KEY = 'profileAvatar';
 
 const getDefaultProfileData = (user) => ({
   fullName: user?.full_name || 'Demo Finly',
   email: user?.email || 'demo@finly.app',
-  phone: user?.phone || mockProfile.phone,
+  phone: user?.phone || '',
   city: mockProfile.city,
   joined: mockProfile.joined,
+  avatarUrl: localStorage.getItem(AVATAR_STORAGE_KEY) || '',
 });
 
 const getSavedProfile = (user) => {
-  const saved = localStorage.getItem('profileData');
+  const saved = localStorage.getItem(PROFILE_STORAGE_KEY);
   return saved ? { ...getDefaultProfileData(user), ...JSON.parse(saved) } : getDefaultProfileData(user);
+};
+
+const mapApiProfile = (payload, user) => {
+  const profileUser = payload?.user || {};
+  return {
+    ...getSavedProfile(user),
+    fullName: profileUser.full_name || profileUser.fullName || user?.full_name || 'Demo Finly',
+    email: profileUser.email || user?.email || 'demo@finly.app',
+    phone: profileUser.phone || user?.phone || '',
+    city: profileUser.province || profileUser.location?.province || profileUser.city || profileUser.location?.city || mockProfile.city,
+    joined: profileUser.joined_label || mockProfile.joined,
+    avatarUrl: localStorage.getItem(AVATAR_STORAGE_KEY) || '',
+  };
 };
 
 export default function useProfileSettings({ user, showSuccess, showError }) {
@@ -33,6 +51,29 @@ export default function useProfileSettings({ user, showSuccess, showError }) {
     confirmPassword: '',
   });
   const [passwordErrors, setPasswordErrors] = useState({});
+
+  useEffect(() => {
+    let ignore = false;
+
+    const loadProfile = async () => {
+      try {
+        const response = await getProfile();
+        const nextProfile = mapApiProfile(response.data, user);
+        if (!ignore) {
+          setProfileData(nextProfile);
+          localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(nextProfile));
+        }
+      } catch (error) {
+        console.error('Error loading profile:', error);
+      }
+    };
+
+    loadProfile();
+
+    return () => {
+      ignore = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     localStorage.setItem('theme', theme);
@@ -104,10 +145,48 @@ export default function useProfileSettings({ user, showSuccess, showError }) {
     setIsEditing(false);
   };
 
-  const handleProfileSave = () => {
-    localStorage.setItem('profileData', JSON.stringify(profileData));
-    setIsEditing(false);
-    showSuccess('Profil berhasil disimpan');
+  const handleProfileSave = async () => {
+    try {
+      const response = await updatePersonalProfile(profileData);
+      const nextProfile = {
+        ...profileData,
+        ...mapApiProfile(response.data, user),
+        avatarUrl: profileData.avatarUrl,
+      };
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(nextProfile));
+      setProfileData(nextProfile);
+      setIsEditing(false);
+      showSuccess('Profil berhasil disimpan');
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      showError(error.response?.data?.message || 'Gagal menyimpan profil');
+    }
+  };
+
+  const handleAvatarChange = (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showError('File foto profil harus berupa gambar.');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      showError('Ukuran foto maksimal 2 MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const avatarUrl = String(reader.result || '');
+      localStorage.setItem(AVATAR_STORAGE_KEY, avatarUrl);
+      window.dispatchEvent(new CustomEvent('finly:profile-avatar-updated', { detail: avatarUrl }));
+      setProfileData((prev) => {
+        const nextProfile = { ...prev, avatarUrl };
+        localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(nextProfile));
+        return nextProfile;
+      });
+      showSuccess('Foto profil berhasil diperbarui');
+    };
+    reader.readAsDataURL(file);
   };
 
   return {
@@ -125,6 +204,7 @@ export default function useProfileSettings({ user, showSuccess, showError }) {
     handlePasswordChange,
     handlePasswordSave,
     handleProfileChange,
+    handleAvatarChange,
     handleCancelProfileEdit,
     handleProfileSave,
   };

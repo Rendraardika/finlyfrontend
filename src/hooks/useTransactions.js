@@ -62,7 +62,10 @@ export default function useTransactions({ showError, showSuccess, showInfo }) {
         ? await updateTransaction(editingData.id, transaction)
         : await createTransaction(transaction);
       const savedTransaction = response.data?.transaction;
-      const normalizedTransaction = normalizeTransaction(savedTransaction || transaction);
+      const mergedTransaction = editingData
+        ? { ...editingData, ...(savedTransaction || {}), ...transaction }
+        : (savedTransaction || transaction);
+      const normalizedTransaction = normalizeTransaction(mergedTransaction);
       const nextTransactions = editingData
         ? transactions.map((trx) => (trx.id === editingData.id ? normalizedTransaction : trx))
         : [normalizedTransaction, ...transactions];
