@@ -3684,12 +3684,6 @@ function StockDetail({ stock, period, setPeriod, onBack, isFavorite, hasAlert, o
         </div>
       </div>
 
-      {analysisUnavailable && (
-        <div className="rounded-xl border border-amber-200 dark:border-amber-500/25 bg-amber-50 dark:bg-amber-500/10 px-4 py-3 text-[13px] text-amber-800 dark:text-amber-200 leading-relaxed mb-4">
-          Analisis mendalam belum tersedia untuk aset ini. Finly tetap menampilkan data dasar dan simulasi edukatif sementara.
-        </div>
-      )}
-
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
         <ScorePanel stock={stock} />
         {crypto ? <CryptoSentimentPanel stock={stock} /> : <MarketSignalPanel stock={stock} />}
